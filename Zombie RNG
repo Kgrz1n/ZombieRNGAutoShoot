@@ -19,10 +19,12 @@ local isAutoShootEnabled = false
 local isWallCheckEnabled = true
 local lockSmoothness = 0.2
 local shootSpeed = 0.15 -- Velocidade de disparo (em segundos)
+local stickyTime = 2.0 -- Tempo para manter o mesmo alvo (em segundos)
 local lockKey = Enum.KeyCode.T
 local priorityMode = "closest"
 local TARGET_PART_NAME = "Head"
 local currentLockedTarget = nil
+local targetLockTime = 0
 local isBinding = false
 local isMinimized = false
 local lastShootTime = 0
@@ -40,6 +42,187 @@ local function getServerData(zombieClient)
         end
     end
     return nil
+end
+
+local function toggleReduceMotion(enabled)
+    if enabled then
+        -- CONGELAR TUDO - MODO TIJOLO COMPLETO
+        for _, zombie in pairs(ZombiesFolder:GetChildren()) do
+            local humanoid = zombie:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                -- Parar animações
+                local animator = humanoid:FindFirstChildOfClass("Animator")
+                if animator then
+                    for _, track in pairs(animator:GetPlayingAnimationTracks()) do
+                        track:Stop()
+                        track:Destroy()
+                    end
+                    animator:Destroy()
+                end
+                
+                -- Congelar completamente o Humanoid
+                humanoid.WalkSpeed = 0
+                humanoid.JumpPower = 0
+                humanoid.AutoRotate = false
+                humanoid.PlatformStand = true
+            end
+            
+            -- ANCORAR TODAS AS PARTES - TIJOLO COMPLETO
+            for _, part in pairs(zombie:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.Anchored = true
+                    part.CanCollide = false
+                    part.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end
+            end
+            
+            -- Deletar joints/motors
+            for _, obj in pairs(zombie:GetDescendants()) do
+                if obj:IsA("Motor6D") or obj:IsA("Weld") or obj:IsA("WeldConstraint") then
+                    obj:Destroy()
+                end
+            end
+        end
+        
+        for _, zombie in pairs(ServerZombies:GetChildren()) do
+            local humanoid = zombie:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                local animator = humanoid:FindFirstChildOfClass("Animator")
+                if animator then
+                    for _, track in pairs(animator:GetPlayingAnimationTracks()) do
+                        track:Stop()
+                        track:Destroy()
+                    end
+                    animator:Destroy()
+                end
+                
+                humanoid.WalkSpeed = 0
+                humanoid.JumpPower = 0
+                humanoid.AutoRotate = false
+                humanoid.PlatformStand = true
+            end
+            
+            for _, part in pairs(zombie:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.Anchored = true
+                    part.CanCollide = false
+                    part.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end
+            end
+            
+            for _, obj in pairs(zombie:GetDescendants()) do
+                if obj:IsA("Motor6D") or obj:IsA("Weld") or obj:IsA("WeldConstraint") then
+                    obj:Destroy()
+                end
+            end
+        end
+        
+        -- DESABILITAR TODA FÍSICA DO WORKSPACE
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("BodyMover") or obj:IsA("BodyGyro") or obj:IsA("BodyPosition") or 
+               obj:IsA("BodyVelocity") or obj:IsA("BodyAngularVelocity") or obj:IsA("BodyForce") then
+                obj:Destroy()
+            end
+        end
+        
+    else
+        -- RESTAURAR MOVIMENTOS
+        for _, zombie in pairs(ZombiesFolder:GetChildren()) do
+            local humanoid = zombie:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.WalkSpeed = 16
+                humanoid.JumpPower = 50
+                humanoid.AutoRotate = true
+                humanoid.PlatformStand = false
+            end
+            
+            for _, part in pairs(zombie:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.Anchored = false
+                    part.CanCollide = true
+                end
+            end
+        end
+        
+        for _, zombie in pairs(ServerZombies:GetChildren()) do
+            local humanoid = zombie:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.WalkSpeed = 16
+                humanoid.JumpPower = 50
+                humanoid.AutoRotate = true
+                humanoid.PlatformStand = false
+            end
+            
+            for _, part in pairs(zombie:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.Anchored = false
+                    part.CanCollide = true
+                end
+            end
+        end
+    end
+end
+
+local function toggleLowGraphics(enabled)
+    local Lighting = game:GetService("Lighting")
+    local Terrain = workspace.Terrain
+    
+    if enabled then
+        -- REDUZIR QUALIDADE GRÁFICA
+        settings().Rendering.QualityLevel = 1
+        settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04
+        
+        -- Lighting
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 100
+        Lighting.Brightness = 2
+        
+        -- Desabilitar efeitos visuais
+        for _, effect in pairs(Lighting:GetChildren()) do
+            if effect:IsA("PostEffect") then
+                effect.Enabled = false
+            end
+        end
+        
+        -- Terrain
+        Terrain.WaterWaveSize = 0
+        Terrain.WaterWaveSpeed = 0
+        Terrain.WaterReflectance = 0
+        Terrain.WaterTransparency = 0
+        Terrain.Decoration = false
+        
+        -- Reduzir detalhes de objetos
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("ParticleEmitter") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
+                obj.Enabled = false
+            elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                obj.Transparency = 1
+            end
+        end
+        
+    else
+        -- RESTAURAR QUALIDADE NORMAL
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
+        settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
+        
+        Lighting.GlobalShadows = true
+        Lighting.FogEnd = 100000
+        Lighting.Brightness = 1
+        
+        for _, effect in pairs(Lighting:GetChildren()) do
+            if effect:IsA("PostEffect") then
+                effect.Enabled = true
+            end
+        end
+        
+        Terrain.WaterWaveSize = 0.05
+        Terrain.WaterWaveSpeed = 10
+        Terrain.WaterReflectance = 1
+        Terrain.WaterTransparency = 0.3
+        Terrain.Decoration = true
+    end
 end
 
 local function hasLineOfSight(fromPos, toPos)
@@ -66,11 +249,27 @@ local function isZombieValid(zombieClient)
     return true
 end
 
+local lastTargetUpdate = 0
+local targetUpdateRate = 0.1 -- Atualiza alvo a cada 0.1 segundos
+
 local function getValidTarget()
-    if currentLockedTarget and not isZombieValid(currentLockedTarget.Parent) then
-        currentLockedTarget = nil
+    -- Só atualizar alvo em intervalos (evita lag)
+    local currentTime = tick()
+    if currentTime - lastTargetUpdate < targetUpdateRate then
+        if currentLockedTarget and isZombieValid(currentLockedTarget.Parent) then
+            return currentLockedTarget
+        end
+    end
+    lastTargetUpdate = currentTime
+    
+    -- Se tem alvo atual válido e ainda não passou o tempo de sticky
+    if currentLockedTarget and isZombieValid(currentLockedTarget.Parent) then
+        if currentTime - targetLockTime < stickyTime then
+            return currentLockedTarget
+        end
     end
     
+    -- Buscar novo alvo
     local bestTarget = nil
     local bestVal = (priorityMode == "hp") and 0 or math.huge
     local char = player.Character
@@ -84,22 +283,27 @@ local function getValidTarget()
             if hitbox and hum then
                 local dist = (pRoot.Position - hitbox.Position).Magnitude
                 
-                if hasLineOfSight(Camera.CFrame.Position, hitbox.Position) then
-                    if priorityMode == "hp" then
-                        if hum.Health > bestVal then
-                            bestVal = hum.Health
-                            bestTarget = hitbox
-                        end
-                    elseif priorityMode == "closest" then
-                        if dist < bestVal then
-                            bestVal = dist
-                            bestTarget = hitbox
-                        end
+                -- Removido wallcheck para melhorar performance
+                if priorityMode == "hp" then
+                    if hum.Health > bestVal then
+                        bestVal = hum.Health
+                        bestTarget = hitbox
+                    end
+                elseif priorityMode == "closest" then
+                    if dist < bestVal then
+                        bestVal = dist
+                        bestTarget = hitbox
                     end
                 end
             end
         end
     end
+    
+    -- Se encontrou novo alvo, resetar timer
+    if bestTarget and bestTarget ~= currentLockedTarget then
+        targetLockTime = currentTime
+    end
+    
     currentLockedTarget = bestTarget
     return bestTarget
 end
@@ -181,9 +385,30 @@ screenGui.Name = "autosolver_euler"
 local header = Instance.new("Frame", screenGui)
 header.Size = UDim2.new(0, 340, 0, 35); header.Position = UDim2.new(0.5, -170, 0.3, 0); header.BackgroundColor3 = Color3.fromRGB(30, 30, 30); header.BorderSizePixel = 0; header.Active = true; header.Draggable = true
 local headerTxt = Instance.new("TextLabel", header)
-headerTxt.Size = UDim2.new(1, -10, 1, 0); headerTxt.Position = UDim2.new(0, 10, 0, 0); headerTxt.Text = "zombie rng | dc: @deadshizik"; headerTxt.TextColor3 = Color3.new(1, 1, 1); headerTxt.Font = Enum.Font.GothamBold; headerTxt.TextSize = 13; headerTxt.BackgroundTransparency = 1; headerTxt.TextXAlignment = Enum.TextXAlignment.Left
+headerTxt.Size = UDim2.new(1, -70, 1, 0); headerTxt.Position = UDim2.new(0, 10, 0, 0); headerTxt.Text = "zombie rng | dc: @deadshizik"; headerTxt.TextColor3 = Color3.new(1, 1, 1); headerTxt.Font = Enum.Font.GothamBold; headerTxt.TextSize = 13; headerTxt.BackgroundTransparency = 1; headerTxt.TextXAlignment = Enum.TextXAlignment.Left
 local mainBody = Instance.new("Frame", header)
-mainBody.Size = UDim2.new(1, 0, 0, 320); mainBody.Position = UDim2.new(0, 0, 1, 1); mainBody.BackgroundColor3 = Color3.fromRGB(0, 0, 0); mainBody.BorderSizePixel = 0
+mainBody.Size = UDim2.new(1, 0, 0, 370); mainBody.Position = UDim2.new(0, 0, 1, 1); mainBody.BackgroundColor3 = Color3.fromRGB(0, 0, 0); mainBody.BorderSizePixel = 0
+
+-- Botão de Fechar (X)
+local closeBtn = Instance.new("TextButton", header)
+closeBtn.Size = UDim2.new(0, 25, 0, 25); closeBtn.Position = UDim2.new(1, -60, 0, 5); closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50); closeBtn.BorderSizePixel = 0; closeBtn.Text = "X"; closeBtn.TextColor3 = Color3.new(1, 1, 1); closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 16; closeBtn.ZIndex = 10
+closeBtn.MouseButton1Click:Connect(function()
+    -- Restaurar gráficos antes de fechar
+    if isLowGraphicsEnabled then
+        toggleLowGraphics(false)
+    end
+    if isReduceMotionEnabled then
+        toggleReduceMotion(false)
+    end
+    
+    -- Destruir GUI
+    screenGui:Destroy()
+    
+    -- Avisar que foi fechado
+    print("[ZOMBIE RNG] Script fechado com sucesso!")
+end)
+
+-- Botão de Minimizar (-)
 local minimizeBtn = Instance.new("TextButton", header)
 minimizeBtn.Size = UDim2.new(0, 25, 0, 25); minimizeBtn.Position = UDim2.new(1, -30, 0, 5); minimizeBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 55); minimizeBtn.BorderSizePixel = 0; minimizeBtn.Text = "-"; minimizeBtn.TextColor3 = Color3.new(1, 1, 1); minimizeBtn.Font = Enum.Font.GothamBold; minimizeBtn.TextSize = 18; minimizeBtn.ZIndex = 10
 minimizeBtn.MouseButton1Click:Connect(function()
@@ -208,9 +433,18 @@ bindBtn.MouseButton1Click:Connect(function() isBinding = true; bindBtn.Text = "p
 createStrictSlider(combatFrame, "lock smoothness", UDim2.new(0,0,0,75), 0.05, 1, lockSmoothness, function(v) lockSmoothness = v end)
 createStrictToggle(combatFrame, "auto shoot", UDim2.new(0,0,0,130), isAutoShootEnabled, function(v) isAutoShootEnabled = v end)
 createStrictSlider(combatFrame, "shoot speed", UDim2.new(0,0,0,165), 0.05, 0.5, shootSpeed, function(v) shootDelay = v end)
+createStrictSlider(combatFrame, "sticky target", UDim2.new(0,0,0,220), 0.5, 5, stickyTime, function(v) stickyTime = v end)
 
 -- Visual Tab Options
 createStrictToggle(visualFrame, "hitbox outline", UDim2.new(0,0,0,0), isShowHitboxEnabled, function(v) isShowHitboxEnabled = v end)
+createStrictToggle(visualFrame, "low graphics", UDim2.new(0,0,0,35), isLowGraphicsEnabled, function(v) 
+    isLowGraphicsEnabled = v 
+    toggleLowGraphics(v)
+end)
+createStrictToggle(visualFrame, "reduce motion", UDim2.new(0,0,0,70), isReduceMotionEnabled, function(v) 
+    isReduceMotionEnabled = v 
+    toggleReduceMotion(v)
+end)
 
 combatTabBtn.MouseButton1Click:Connect(function()
     combatFrame.Visible, visualFrame.Visible = true, false
@@ -224,29 +458,48 @@ visualTabBtn.MouseButton1Click:Connect(function()
 end)
 
 -- Auto-shoot loop (agora mais rápido e eficiente)
-RunService.Heartbeat:Connect(function()
-    performAutoShoot()
+local shootConnection
+shootConnection = RunService.Heartbeat:Connect(function()
+    if isAutoShootEnabled and isLockOnActive and currentLockedTarget then
+        performAutoShoot()
+    end
 end)
+
+local lastVisualUpdate = 0
+local visualUpdateRate = 0.2 -- Atualiza visuais a cada 0.2 segundos
 
 RunService.RenderStepped:Connect(function(dt)
     if isLockOnActive then
         local target = getValidTarget()
         if target then
             local targetPos = target.Position
-            local lookVector = (targetPos - Camera.CFrame.Position).Unit
             local targetRotation = CFrame.lookAt(Camera.CFrame.Position, targetPos).Rotation
             Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position) * targetRotation, 1 - lockSmoothness)
         end
     end
-    for _, zombie in pairs(ZombiesFolder:GetChildren()) do
-        local hitbox = zombie:FindFirstChild(TARGET_PART_NAME)
-        if hitbox then
-            local box = hitbox:FindFirstChild("HitboxOutline")
-            if isShowHitboxEnabled then
-                if not box then
-                    box = Instance.new("SelectionBox", hitbox); box.Name = "HitboxOutline"; box.Adornee = hitbox; box.Color3 = Color3.new(1, 0, 0); box.LineThickness = 0.05; box.SurfaceTransparency = 0.8
+    
+    -- Otimização: atualizar hitboxes em intervalos
+    local currentTime = tick()
+    if currentTime - lastVisualUpdate >= visualUpdateRate then
+        lastVisualUpdate = currentTime
+        
+        for _, zombie in pairs(ZombiesFolder:GetChildren()) do
+            local hitbox = zombie:FindFirstChild(TARGET_PART_NAME)
+            if hitbox then
+                local box = hitbox:FindFirstChild("HitboxOutline")
+                if isShowHitboxEnabled then
+                    if not box then
+                        box = Instance.new("SelectionBox", hitbox)
+                        box.Name = "HitboxOutline"
+                        box.Adornee = hitbox
+                        box.Color3 = Color3.new(1, 0, 0)
+                        box.LineThickness = 0.05
+                        box.SurfaceTransparency = 0.8
+                    end
+                elseif box then 
+                    box:Destroy() 
                 end
-            elseif box then box:Destroy() end
+            end
         end
     end
 end)
