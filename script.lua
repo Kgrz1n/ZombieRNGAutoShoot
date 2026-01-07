@@ -1,328 +1,140 @@
--- note: you can modify this however you want, js credit my discord please - @deadshizik
+--====================================================--
+-- ZOMBIE RNG - FULL COMBAT & VISUAL SYSTEM + AUTO HOVER
+--====================================================--
 
-local player = game.Players.LocalPlayer
-local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ZombiesFolder = workspace:WaitForChild("Zombies")
-local ServerZombies = workspace:WaitForChild("ServerZombies")
-local Camera = workspace.CurrentCamera
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
 
-for _, name in pairs({"autosolver_euler", "hitbox_debugger_gui"}) do
-    local old = game:GetService("CoreGui"):FindFirstChild(name) or player.PlayerGui:FindFirstChild(name)
-    if old then old:Destroy() end
-end
+local player = Players.LocalPlayer
+local camera = Workspace.CurrentCamera
 
-local isLockOnActive = false
-local isShowHitboxEnabled = false
-local lockSmoothness = 0.2
-local lockKey = Enum.KeyCode.T
-local priorityMode = "closest"
-local TARGET_PART_NAME = "Head"
-local currentLockedTarget = nil
-local isBinding = false
-local isMinimized = false
+--====================================================--
+-- CONFIGURAÇÕES
+--====================================================--
 
--- AUTO SHOOT
-local isAutoShoot = false
+local settings = {
+    lockOn = false,
+    lockSmoothness = 0.25,
+    hitbox = false,
+    hover = false,
+    hoverHeight = 12,
+    esp = false
+}
 
-local function getServerData(zombieClient)
-    if not zombieClient then return nil end
-    local targetIdStr = tostring(zombieClient.Name)
-    for _, serverModel in pairs(ServerZombies:GetChildren()) do
-        local success, idValue = pcall(function() return serverModel.id end)
-        if not success or not idValue then
-            idValue = serverModel:GetAttribute("id") or (serverModel:FindFirstChild("id") and serverModel.id.Value)
-        end
-        if idValue and tostring(idValue) == targetIdStr then
-            return serverModel:FindFirstChildOfClass("Humanoid"), serverModel:FindFirstChild("HumanoidRootPart"), serverModel
-        end
-    end
-    return nil
-end
+--====================================================--
+-- GUI BASE SIMPLIFICADA
+--====================================================--
 
-local function isZombieValid(zombieClient)
-    if not zombieClient or not zombieClient.Parent or zombieClient.Parent ~= ZombiesFolder then return false end
-    local hitbox = zombieClient:FindFirstChild(TARGET_PART_NAME)
-    if not hitbox then return false end
-    local hum, root, serverModel = getServerData(zombieClient)
-    if not hum or hum.Health <= 0 or not root then return false end
-    if serverModel:GetAttribute("Dead") or serverModel:GetAttribute("Ragdoll") then return false end
-    return true
-end
+local ScreenGui = Instance.new("ScreenGui", player.PlayerGui)
+ScreenGui.Name = "CombatUI"
 
-local function getValidTarget()
-    if currentLockedTarget and not isZombieValid(currentLockedTarget.Parent) then
-        currentLockedTarget = nil
-    end
-    
-    local bestTarget = nil
-    local bestVal = (priorityMode == "hp") and 0 or math.huge
-    local char = player.Character
-    local pRoot = char and char:FindFirstChild("HumanoidRootPart")
-    if not pRoot then return nil end
+local Main = Instance.new("Frame", ScreenGui)
+Main.Size = UDim2.new(0, 300, 0, 350)
+Main.Position = UDim2.new(0, 20, 0.5, -150)
+Main.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+Main.BorderSizePixel = 0
 
-    for _, zombie in pairs(ZombiesFolder:GetChildren()) do
-        if isZombieValid(zombie) then
-            local hitbox = zombie:FindFirstChild(TARGET_PART_NAME)
-            local hum = getServerData(zombie)
-            if hitbox and hum then
-                local dist = (pRoot.Position - hitbox.Position).Magnitude
-                if priorityMode == "hp" then
-                    if hum.Health > bestVal then
-                        bestVal = hum.Health
-                        bestTarget = hitbox
-                    end
-                elseif priorityMode == "closest" then
-                    if dist < bestVal then
-                        bestVal = dist
-                        bestTarget = hitbox
-                    end
-                end
-            end
-        end
-    end
+local function makeToggle(parent, text, y, callback)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size = UDim2.new(1, -20, 0, 30)
+    btn.Position = UDim2.new(0, 10, 0, y)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    btn.Text = text .. ": OFF"
 
-    currentLockedTarget = bestTarget
-    return bestTarget
-end
-
----------------------------------------------------------------------
--- AUTO SHOOT TURBO (3 tiros por frame — extremamente agressivo)
----------------------------------------------------------------------
-local function autoShoot(target)
-    local char = player.Character
-    if not char then return end
-
-    local tool = char:FindFirstChildOfClass("Tool")
-    if not tool then return end
-
-    task.spawn(function()
-        for i = 1, 3 do
-            tool:Activate()
-            task.wait()
-        end
-    end)
-end
-
----------------------------------------------------------------------
-
-local function createStrictToggle(parent, text, pos, default, callback)
-    local frame = Instance.new("Frame", parent)
-    frame.Size = UDim2.new(1, 0, 0, 30); frame.Position = pos; frame.BackgroundTransparency = 1
-    local lbl = Instance.new("TextLabel", frame)
-    lbl.Size = UDim2.new(0, 120, 1, 0); lbl.Text = text:lower(); lbl.TextColor3 = Color3.fromRGB(180, 180, 180)
-    lbl.Font = Enum.Font.Gotham; lbl.TextSize = 12; lbl.BackgroundTransparency = 1; lbl.TextXAlignment = Enum.TextXAlignment.Left
-    local bg = Instance.new("Frame", frame)
-    bg.Size = UDim2.new(0, 34, 0, 16); bg.Position = UDim2.new(1, -34, 0.5, -8)
-    bg.BackgroundColor3 = Color3.fromRGB(20, 20, 20); bg.BorderSizePixel = 1; bg.BorderColor3 = Color3.fromRGB(50, 50, 50)
-    local box = Instance.new("Frame", bg)
-    box.Size = UDim2.new(0, 8, 0, 8)
-    box.Position = default and UDim2.new(1, -11, 0.5, -4) or UDim2.new(0, 3, 0.5, -4)
-    box.BackgroundColor3 = default and Color3.fromRGB(200, 200, 200) or Color3.fromRGB(60, 60, 60)
-    box.BorderSizePixel = 0
-    local btn = Instance.new("TextButton", bg)
-    btn.Size = UDim2.new(1, 0, 1, 0); btn.BackgroundTransparency = 1; btn.Text = ""
+    local state = false
     btn.MouseButton1Click:Connect(function()
-        default = not default
-        box.Position = default and UDim2.new(1, -11, 0.5, -4) or UDim2.new(0, 3, 0.5, -4)
-        box.BackgroundColor3 = default and Color3.fromRGB(200, 200, 200) or Color3.fromRGB(60, 60, 60)
-        callback(default)
+        state = not state
+        btn.Text = text .. ": " .. (state and "ON" or "OFF")
+        callback(state)
     end)
+
+    return btn
 end
 
-local function createStrictSlider(parent, text, pos, minV, maxV, default, callback)
-    local frame = Instance.new("Frame", parent)
-    frame.Size = UDim2.new(1, 0, 0, 45); frame.Position = pos; frame.BackgroundTransparency = 1
-    local lbl = Instance.new("TextLabel", frame)
-    lbl.Size = UDim2.new(1, 0, 0, 15); lbl.Text = text:lower(); lbl.TextColor3 = Color3.fromRGB(130, 130, 130)
-    lbl.Font = Enum.Font.Gotham; lbl.TextSize = 11; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.BackgroundTransparency = 1
-    local sBack = Instance.new("Frame", frame)
-    sBack.Size = UDim2.new(1, -60, 0, 1); sBack.Position = UDim2.new(0, 0, 0, 30)
-    sBack.BackgroundColor3 = Color3.fromRGB(50, 50, 50); sBack.BorderSizePixel = 0
-    local sBtn = Instance.new("Frame", sBack)
-    sBtn.Size = UDim2.new(0, 2, 0, 10)
-    sBtn.Position = UDim2.new((default - minV)/(maxV - minV), -1, 0.5, -5)
-    sBtn.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
-    local input = Instance.new("TextBox", frame)
-    input.Size = UDim2.new(0, 50, 0, 20); input.Position = UDim2.new(1, -50, 0, 21)
-    input.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-    input.BorderSizePixel = 1; input.BorderColor3 = Color3.fromRGB(40, 40, 40)
-    input.Text = tostring(default); input.TextColor3 = Color3.new(1, 1, 1)
-    input.Font = Enum.Font.Code; input.TextSize = 11
-    local function update(val)
-        val = math.clamp(math.round(val * 100) / 100, minV, maxV, val)
-        input.Text = tostring(val)
-        sBtn.Position = UDim2.new((val - minV)/(maxV - minV), -1, 0.5, -5)
-        callback(val)
-    end
-    local dragBtn = Instance.new("TextButton", sBack)
-    dragBtn.Size = UDim2.new(1, 20, 1, 30)
-    dragBtn.Position = UDim2.new(0, -10, 0, -15)
-    dragBtn.BackgroundTransparency = 1; dragBtn.Text = ""
-    local dragging = false
-    dragBtn.MouseButton1Down:Connect(function() dragging = true end)
-    UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
-        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-            local rel = math.clamp((i.Position.X - sBack.AbsolutePosition.X) / sBack.AbsoluteSize.X, 0, 1)
-            update(minV + (maxV - minV) * rel)
-        end
-    end)
-    input.FocusLost:Connect(function() update(tonumber(input.Text) or default) end)
-end
+makeToggle(Main, "Lock On", 10, function(v) settings.lockOn = v end)
+makeToggle(Main, "Hitbox", 50, function(v) settings.hitbox = v end)
+makeToggle(Main, "ESP", 90, function(v) settings.esp = v end)
+makeToggle(Main, "Auto Hover", 130, function(v) settings.hover = v end)
 
--- GUI
+--====================================================--
+-- FUNÇÃO: ACHAR ALVO
+--====================================================--
 
-local screenGui = Instance.new("ScreenGui", player.PlayerGui)
-screenGui.Name = "autosolver_euler"
+local function getNearestZombie()
+    local zombiesFolder = Workspace:FindFirstChild("Zombies") or Workspace:FindFirstChild("Enemies")
+    if not zombiesFolder then return nil end
 
-local header = Instance.new("Frame", screenGui)
-header.Size = UDim2.new(0, 340, 0, 35)
-header.Position = UDim2.new(0.5, -170, 0.3, 0)
-header.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-header.BorderSizePixel = 0
-header.Active = true
-header.Draggable = true
-
-local headerTxt = Instance.new("TextLabel", header)
-headerTxt.Size = UDim2.new(1, -10, 1, 0)
-headerTxt.Position = UDim2.new(0, 10, 0, 0)
-headerTxt.Text = "zombie rng | dc: @deadshizik"
-headerTxt.TextColor3 = Color3.new(1, 1, 1)
-headerTxt.Font = Enum.Font.GothamBold
-headerTxt.TextSize = 13
-headerTxt.BackgroundTransparency = 1
-headerTxt.TextXAlignment = Enum.TextXAlignment.Left
-
-local mainBody = Instance.new("Frame", header)
-mainBody.Size = UDim2.new(1, 0, 0, 200)
-mainBody.Position = UDim2.new(0, 0, 1, 1)
-mainBody.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-mainBody.BorderSizePixel = 0
-
-local minimizeBtn = Instance.new("TextButton", header)
-minimizeBtn.Size = UDim2.new(0, 25, 0, 25)
-minimizeBtn.Position = UDim2.new(1, -30, 0, 5)
-minimizeBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
-minimizeBtn.BorderSizePixel = 0
-minimizeBtn.Text = "-"
-minimizeBtn.TextColor3 = Color3.new(1, 1, 1)
-minimizeBtn.Font = Enum.Font.GothamBold
-minimizeBtn.TextSize = 18
-minimizeBtn.ZIndex = 10
-
-minimizeBtn.MouseButton1Click:Connect(function()
-    isMinimized = not isMinimized
-    mainBody.Visible = not isMinimized
-    minimizeBtn.Text = isMinimized and "+" or "-"
-end)
-
-local sideBar = Instance.new("Frame", mainBody)
-sideBar.Size = UDim2.new(0, 80, 1, 0)
-sideBar.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-sideBar.BorderSizePixel = 0
-
-local combatTabBtn = Instance.new("TextButton", sideBar)
-combatTabBtn.Size = UDim2.new(1, 0, 0, 45)
-combatTabBtn.Text = "combat"
-combatTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-combatTabBtn.TextColor3 = Color3.new(1, 1, 1)
-combatTabBtn.Font = Enum.Font.GothamBold
-combatTabBtn.BorderSizePixel = 0
-
-local visualTabBtn = Instance.new("TextButton", sideBar)
-visualTabBtn.Size = UDim2.new(1, 0, 0, 45)
-visualTabBtn.Position = UDim2.new(0, 0, 0, 45)
-visualTabBtn.Text = "visuals"
-visualTabBtn.BackgroundTransparency = 1
-visualTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5)
-visualTabBtn.Font = Enum.Font.GothamBold
-visualTabBtn.BorderSizePixel = 0
-
-local combatFrame = Instance.new("Frame", mainBody)
-combatFrame.Size = UDim2.new(1, -100, 1, -20)
-combatFrame.Position = UDim2.new(0, 90, 0, 10)
-combatFrame.BackgroundTransparency = 1
-
-local visualFrame = Instance.new("Frame", mainBody)
-visualFrame.Size = UDim2.new(1, -100, 1, -20)
-visualFrame.Position = UDim2.new(0, 90, 0, 10)
-visualFrame.BackgroundTransparency = 1
-visualFrame.Visible = false
-
-createStrictToggle(combatFrame, "camera lock", UDim2.new(0,0,0,0), isLockOnActive, function(v) isLockOnActive = v end)
-
-local bindBtn = Instance.new("TextButton", combatFrame)
-bindBtn.Size = UDim2.new(1, 0, 0, 30)
-bindBtn.Position = UDim2.new(0,0,0,35)
-bindBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
-bindBtn.Text = "keybind: " .. lockKey.Name:lower()
-bindBtn.TextColor3 = Color3.new(1,1,1)
-bindBtn.Font = Enum.Font.Code
-bindBtn.TextSize = 11
-bindBtn.BorderSizePixel = 1
-bindBtn.BorderColor3 = Color3.fromRGB(50,50,50)
-
-bindBtn.MouseButton1Click:Connect(function()
-    isBinding = true
-    bindBtn.Text = "press any key..."
-end)
-
-createStrictSlider(combatFrame, "lock smoothness", UDim2.new(0,0,0,75), 0.05, 1, lockSmoothness, function(v) lockSmoothness = v end)
-
-createStrictToggle(combatFrame, "auto shoot", UDim2.new(0,0,0,115), isAutoShoot, function(v)
-    isAutoShoot = v
-end)
-
-combatTabBtn.MouseButton1Click:Connect(function()
-    combatFrame.Visible = true
-    visualFrame.Visible = false
-    combatTabBtn.TextColor3 = Color3.new(1,1,1)
-    visualTabBtn.TextColor3 = Color3.new(0.5,0.5,0.5)
-    combatTabBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    visualTabBtn.BackgroundTransparency = 1
-end)
-
-visualTabBtn.MouseButton1Click:Connect(function()
-    combatFrame.Visible = false
-    visualFrame.Visible = true
-    visualTabBtn.TextColor3 = Color3.new(1,1,1)
-    combatTabBtn.TextColor3 = Color3.new(0.5,0.5,0.5)
-    visualTabBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    combatTabBtn.BackgroundTransparency = 1
-end)
-
-createStrictToggle(visualFrame, "hitbox outline", UDim2.new(0,0,0,0), isShowHitboxEnabled, function(v)
-    isShowHitboxEnabled = v
-end)
-
--- KEYBIND SET
-UserInputService.InputBegan:Connect(function(i)
-    if isBinding and i.KeyCode ~= Enum.KeyCode.Unknown then
-        lockKey = i.KeyCode
-        isBinding = false
-        bindBtn.Text = "keybind: " .. lockKey.Name:lower()
-    elseif i.KeyCode == lockKey then
-        isLockOnActive = not isLockOnActive
-    end
-end)
-
----------------------------------------------------------------------
--- RENDER LOOP (mira + auto shoot)
----------------------------------------------------------------------
-RunService.RenderStepped:Connect(function()
-    if isLockOnActive then
-        local target = getValidTarget()
-        if target then
-            local goal = CFrame.new(Camera.CFrame.Position, target.Position)
-            Camera.CFrame = Camera.CFrame:Lerp(goal, lockSmoothness)
-
-            if isAutoShoot then
-                autoShoot(target)
+    local nearest, dist = nil, 999
+    for _, zombie in ipairs(zombiesFolder:GetChildren()) do
+        if zombie:FindFirstChild("HumanoidRootPart") and zombie:FindFirstChild("Humanoid") then
+            local hrp = zombie.HumanoidRootPart
+            local d = (hrp.Position - player.Character.HumanoidRootPart.Position).Magnitude
+            if d < dist and d < 80 then
+                dist = d
+                nearest = hrp
             end
         end
     end
+
+    return nearest
+end
+
+--====================================================--
+-- HITBOX EXPANDER
+--====================================================--
+
+local function setHitbox(zombie, expand)
+    if not zombie:FindFirstChild("HumanoidRootPart") then return end
+    local hrp = zombie.HumanoidRootPart
+
+    if expand then
+        hrp.Size = Vector3.new(25, 25, 25)
+        hrp.Transparency = 0.7
+        hrp.CanCollide = false
+    else
+        hrp.Size = Vector3.new(2, 2, 1)
+        hrp.Transparency = 1
+    end
+end
+
+--====================================================--
+-- AUTO HOVER (VOAR SOBRE O INIMIGO MIRADO)
+--====================================================--
+
+local function hoverOver(target)
+    if not target then return end
+    if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return end
+
+    local hrp = player.Character.HumanoidRootPart
+
+    local goal = target.Position + Vector3.new(0, settings.hoverHeight, 0)
+
+    hrp.CFrame = hrp.CFrame:Lerp(CFrame.new(goal, target.Position), 0.25)
+end
+
+--====================================================--
+-- LOOP PRINCIPAL
+--====================================================--
+
+RunService.RenderStepped:Connect(function()
+    local target = getNearestZombie()
+
+    if settings.lockOn and target then
+        -- Mira no inimigo
+        local desired = CFrame.new(camera.CFrame.Position, target.Position)
+        camera.CFrame = camera.CFrame:Lerp(desired, settings.lockSmoothness)
+    end
+
+    if settings.hitbox and target then
+        setHitbox(target.Parent, true)
+    end
+
+    if settings.hover and target then
+        hoverOver(target)
+    end
 end)
+
+print(">> SCRIPT CARREGADO COM SUCESSO <<")
