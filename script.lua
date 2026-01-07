@@ -23,7 +23,7 @@ local currentLockedTarget = nil
 local isBinding = false
 local isMinimized = false
 
--- ADICIONADO: Auto Shoot
+-- AUTO SHOOT
 local isAutoShoot = false
 
 local function getServerData(zombieClient)
@@ -82,9 +82,30 @@ local function getValidTarget()
             end
         end
     end
+
     currentLockedTarget = bestTarget
     return bestTarget
 end
+
+---------------------------------------------------------------------
+-- AUTO SHOOT TURBO (3 tiros por frame — extremamente agressivo)
+---------------------------------------------------------------------
+local function autoShoot(target)
+    local char = player.Character
+    if not char then return end
+
+    local tool = char:FindFirstChildOfClass("Tool")
+    if not tool then return end
+
+    task.spawn(function()
+        for i = 1, 3 do
+            tool:Activate()
+            task.wait()
+        end
+    end)
+end
+
+---------------------------------------------------------------------
 
 local function createStrictToggle(parent, text, pos, default, callback)
     local frame = Instance.new("Frame", parent)
@@ -130,7 +151,7 @@ local function createStrictSlider(parent, text, pos, minV, maxV, default, callba
     input.Text = tostring(default); input.TextColor3 = Color3.new(1, 1, 1)
     input.Font = Enum.Font.Code; input.TextSize = 11
     local function update(val)
-        val = math.clamp(math.round(val * 100) / 100, minV, maxV)
+        val = math.clamp(math.round(val * 100) / 100, minV, maxV, val)
         input.Text = tostring(val)
         sBtn.Position = UDim2.new((val - minV)/(maxV - minV), -1, 0.5, -5)
         callback(val)
@@ -153,8 +174,11 @@ local function createStrictSlider(parent, text, pos, minV, maxV, default, callba
     input.FocusLost:Connect(function() update(tonumber(input.Text) or default) end)
 end
 
+-- GUI
+
 local screenGui = Instance.new("ScreenGui", player.PlayerGui)
 screenGui.Name = "autosolver_euler"
+
 local header = Instance.new("Frame", screenGui)
 header.Size = UDim2.new(0, 340, 0, 35)
 header.Position = UDim2.new(0.5, -170, 0.3, 0)
@@ -249,9 +273,6 @@ end)
 
 createStrictSlider(combatFrame, "lock smoothness", UDim2.new(0,0,0,75), 0.05, 1, lockSmoothness, function(v) lockSmoothness = v end)
 
-createStrictToggle(visualFrame, "hitbox outline", UDim2.new(0,0,0,0), isShowHitboxEnabled, function(v) isShowHitboxEnabled = v end)
-
--- ADICIONADO: toggle AUTO SHOOT
 createStrictToggle(combatFrame, "auto shoot", UDim2.new(0,0,0,115), isAutoShoot, function(v)
     isAutoShoot = v
 end)
@@ -259,51 +280,39 @@ end)
 combatTabBtn.MouseButton1Click:Connect(function()
     combatFrame.Visible = true
     visualFrame.Visible = false
-    combatTabBtn.TextColor3 = Color3.new(1, 1, 1)
-    combatTabBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
+    combatTabBtn.TextColor3 = Color3.new(1,1,1)
     visualTabBtn.TextColor3 = Color3.new(0.5,0.5,0.5)
+    combatTabBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
     visualTabBtn.BackgroundTransparency = 1
 end)
 
 visualTabBtn.MouseButton1Click:Connect(function()
     combatFrame.Visible = false
     visualFrame.Visible = true
-    visualTabBtn.TextColor3 = Color3.new(1, 1, 1)
-    visualTabBtn.BackgroundTransparency = 0
+    visualTabBtn.TextColor3 = Color3.new(1,1,1)
     combatTabBtn.TextColor3 = Color3.new(0.5,0.5,0.5)
-    combatTabBtn.BackgroundColor3 = Color3.fromRGB(10,10,10)
+    visualTabBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
+    combatTabBtn.BackgroundTransparency = 1
 end)
 
-UserInputService.InputBegan:Connect(function(input)
-    if isBinding then
-        if input.KeyCode ~= Enum.KeyCode.Unknown then
-            lockKey = input.KeyCode
-            bindBtn.Text = "keybind: " .. lockKey.Name:lower()
-            isBinding = false
-        end
-    elseif input.KeyCode == lockKey then
+createStrictToggle(visualFrame, "hitbox outline", UDim2.new(0,0,0,0), isShowHitboxEnabled, function(v)
+    isShowHitboxEnabled = v
+end)
+
+-- KEYBIND SET
+UserInputService.InputBegan:Connect(function(i)
+    if isBinding and i.KeyCode ~= Enum.KeyCode.Unknown then
+        lockKey = i.KeyCode
+        isBinding = false
+        bindBtn.Text = "keybind: " .. lockKey.Name:lower()
+    elseif i.KeyCode == lockKey then
         isLockOnActive = not isLockOnActive
     end
 end)
 
--- ADICIONADO: Função Auto Shoot
-local function autoShoot(target)
-    if not target then return end
-
-    local char = player.Character
-    if not char then return end
-
-    local tool = char:FindFirstChildOfClass("Tool")
-    if not tool then return end
-
-    for _, obj in pairs(tool:GetChildren()) do
-        if obj:IsA("RemoteEvent") and (obj.Name:lower():match("shoot") or obj.Name:lower():match("fire") or obj.Name:lower():match("attack")) then
-            obj:FireServer(target.Position)
-            return
-        end
-    end
-end
-
+---------------------------------------------------------------------
+-- RENDER LOOP (mira + auto shoot)
+---------------------------------------------------------------------
 RunService.RenderStepped:Connect(function()
     if isLockOnActive then
         local target = getValidTarget()
@@ -311,7 +320,6 @@ RunService.RenderStepped:Connect(function()
             local goal = CFrame.new(Camera.CFrame.Position, target.Position)
             Camera.CFrame = Camera.CFrame:Lerp(goal, lockSmoothness)
 
-            -- AUTO SHOOT INTEGRADO
             if isAutoShoot then
                 autoShoot(target)
             end
