@@ -1,4 +1,5 @@
 -- note: you can modify ts however you want, i don't give a fuck, js credit my discord please - @deadshizik
+-- AUTO FARM SYSTEM ADDED
 
 local player = game.Players.LocalPlayer
 local UserInputService = game:GetService("UserInputService")
@@ -8,11 +9,24 @@ local ZombiesFolder = workspace:WaitForChild("Zombies")
 local ServerZombies = workspace:WaitForChild("ServerZombies")
 local Camera = workspace.CurrentCamera
 
-for _, name in pairs({"autosolver_euler", "hitbox_debugger_gui"}) do
+for _, name in pairs({"autosolver_euler", "hitbox_debugger_gui", "object_explorer_gui"}) do
     local old = game:GetService("CoreGui"):FindFirstChild(name) or player.PlayerGui:FindFirstChild(name)
     if old then old:Destroy() end
 end
 
+-- ==================== CONFIGURAÇÕES AUTO FARM ====================
+local isAutoFarmEnabled = false
+local isBossDetectionEnabled = true
+local isAutoCollectEnabled = true
+local isInfiniteShotEnabled = false
+local magnetRange = 100
+local safeUndergroundDepth = 10
+local autoFarmMode = "underground" -- "underground" ou "fly"
+local currentRound = 0
+local isBossRound = false
+local lastShakeTime = 0
+
+-- ==================== VARIÁVEIS ORIGINAIS ====================
 local isLockOnActive = false
 local isShowHitboxEnabled = false
 local isAutoShootEnabled = false
@@ -40,6 +54,312 @@ local originalCameraSubject = nil
 
 local flyConnection
 local noclipConnection
+local autoFarmConnection
+
+-- ==================== FUNÇÕES AUTO FARM ====================
+
+local function detectScreenShake()
+    -- Detecta tremida de tela (boss spawn)
+    local currentPos = Camera.CFrame.Position
+    task.wait(0.1)
+    local newPos = Camera.CFrame.Position
+    local distance = (currentPos - newPos).Magnitude
+    
+    if distance > 0.5 and tick() - lastShakeTime > 5 then
+        lastShakeTime = tick()
+        print("[AUTO FARM] Boss detectado por tremida de tela!")
+        isBossRound = true
+        return true
+    end
+    return false
+end
+
+local function isBossZombie(zombie)
+    if not zombie then return false end
+    local name = zombie.Name:lower()
+    return name:find("boss") ~= nil
+end
+
+local function findBoss()
+    for _, zombie in pairs(ZombiesFolder:GetChildren()) do
+        if isBossZombie(zombie) then
+            local hitbox = zombie:FindFirstChild(TARGET_PART_NAME)
+            if hitbox then
+                return hitbox
+            end
+        end
+    end
+    return nil
+end
+
+local function detectRoundFromUI()
+    -- Tenta detectar o round atual pela UI
+    local playerGui = player:WaitForChild("PlayerGui")
+    
+    -- Procura por TextLabels que possam conter "Round" ou número
+    for _, gui in pairs(playerGui:GetDescendants()) do
+        if gui:IsA("TextLabel") then
+            local text = gui.Text:lower()
+            if text:find("round") or text:find("wave") then
+                local number = tonumber(text:match("%d+"))
+                if number then
+                    currentRound = number
+                    isBossRound = (number % 10 == 0)
+                    return number
+                end
+            end
+        end
+    end
+    return currentRound
+end
+
+local function findNearbyDrops()
+    -- Procura por drops/baús próximos
+    local char = player.Character
+    if not char then return {} end
+    local pRoot = char:FindFirstChild("HumanoidRootPart")
+    if not pRoot then return {} end
+    
+    local drops = {}
+    
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") or obj:IsA("Part") then
+            local name = obj.Name:lower()
+            -- Procura por palavras-chave de itens/baús
+            if name:find("chest") or name:find("reward") or name:find("loot") or 
+               name:find("drop") or name:find("item") or name:find("box") then
+                local pos = obj:IsA("Model") and obj:GetPivot().Position or obj.Position
+                local dist = (pRoot.Position - pos).Magnitude
+                
+                if dist <= magnetRange then
+                    table.insert(drops, {object = obj, distance = dist})
+                end
+            end
+        end
+    end
+    
+    return drops
+end
+
+local function activateMagnet()
+    if not isAutoCollectEnabled then return end
+    
+    local drops = findNearbyDrops()
+    if #drops == 0 then return end
+    
+    local char = player.Character
+    if not char then return end
+    local pRoot = char:FindFirstChild("HumanoidRootPart")
+    if not pRoot then return end
+    
+    -- Teleporta para cada drop
+    for _, drop in pairs(drops) do
+        local pos = drop.object:IsA("Model") and drop.object:GetPivot().Position or drop.object.Position
+        pRoot.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+        task.wait(0.2)
+        print("[AUTO FARM] Coletado:", drop.object.Name)
+    end
+end
+
+local function enableInfiniteShot()
+    -- Desabilita verificação de parede para tiro atravessar
+    isWallCheckEnabled = false
+    maxLockDistance = 999999
+end
+
+local function ensureSafePosition()
+    if not isAutoFarmEnabled then return end
+    
+    local char = player.Character
+    if not char then return end
+    local pRoot = char:FindFirstChild("HumanoidRootPart")
+    if not pRoot then return end
+    
+    if autoFarmMode == "underground" then
+        if not isUndergroundEnabled then
+            isUndergroundEnabled = true
+            undergroundDepth = safeUndergroundDepth
+            toggleUnderground(true)
+        end
+    elseif autoFarmMode == "fly" then
+        if not isFlyEnabled then
+            isFlyEnabled = true
+            toggleFly(true)
+        end
+        -- Mantém altura segura
+        if pRoot.Position.Y < 50 then
+            pRoot.CFrame = pRoot.CFrame + Vector3.new(0, 50, 0)
+        end
+    end
+end
+
+local function startAutoFarm()
+    if autoFarmConnection then
+        autoFarmConnection:Disconnect()
+    end
+    
+    print("[AUTO FARM] Sistema iniciado!")
+    
+    -- Ativa proteções
+    ensureSafePosition()
+    
+    if isInfiniteShotEnabled then
+        enableInfiniteShot()
+    end
+    
+    -- Ativa combat necessário
+    isLockOnActive = true
+    isAutoShootEnabled = true
+    
+    autoFarmConnection = RunService.Heartbeat:Connect(function()
+        if not isAutoFarmEnabled then return end
+        
+        -- Detecta round
+        detectRoundFromUI()
+        
+        -- Se for round de boss, prioriza boss
+        if isBossDetectionEnabled and isBossRound then
+            local boss = findBoss()
+            if boss then
+                currentLockedTarget = boss
+                priorityMode = "boss"
+            else
+                -- Boss morreu, volta ao normal
+                isBossRound = false
+                priorityMode = "closest"
+            end
+        end
+        
+        -- Coleta drops automaticamente
+        if isAutoCollectEnabled then
+            activateMagnet()
+        end
+        
+        -- Garante posição segura
+        ensureSafePosition()
+    end)
+end
+
+local function stopAutoFarm()
+    if autoFarmConnection then
+        autoFarmConnection:Disconnect()
+        autoFarmConnection = nil
+    end
+    
+    isLockOnActive = false
+    isAutoShootEnabled = false
+    
+    print("[AUTO FARM] Sistema parado!")
+end
+
+-- ==================== EXPLORADOR DE OBJETOS ====================
+
+local function createObjectExplorer()
+    local explorerGui = Instance.new("ScreenGui", player.PlayerGui)
+    explorerGui.Name = "object_explorer_gui"
+    
+    local frame = Instance.new("Frame", explorerGui)
+    frame.Size = UDim2.new(0, 400, 0, 500)
+    frame.Position = UDim2.new(0.5, -200, 0.5, -250)
+    frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    frame.BorderSizePixel = 0
+    frame.Active = true
+    frame.Draggable = true
+    
+    local title = Instance.new("TextLabel", frame)
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.Text = "OBJECT EXPLORER"
+    title.TextColor3 = Color3.new(1, 1, 1)
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 14
+    title.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    title.BorderSizePixel = 0
+    
+    local closeBtn = Instance.new("TextButton", frame)
+    closeBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeBtn.Position = UDim2.new(1, -30, 0, 0)
+    closeBtn.Text = "X"
+    closeBtn.TextColor3 = Color3.new(1, 1, 1)
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 16
+    closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    closeBtn.BorderSizePixel = 0
+    closeBtn.MouseButton1Click:Connect(function()
+        explorerGui:Destroy()
+    end)
+    
+    local scroll = Instance.new("ScrollingFrame", frame)
+    scroll.Size = UDim2.new(1, -20, 1, -90)
+    scroll.Position = UDim2.new(0, 10, 0, 40)
+    scroll.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 6
+    
+    local scanBtn = Instance.new("TextButton", frame)
+    scanBtn.Size = UDim2.new(0, 180, 0, 35)
+    scanBtn.Position = UDim2.new(0.5, -90, 1, -45)
+    scanBtn.Text = "SCAN WORKSPACE"
+    scanBtn.TextColor3 = Color3.new(1, 1, 1)
+    scanBtn.Font = Enum.Font.GothamBold
+    scanBtn.TextSize = 12
+    scanBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+    scanBtn.BorderSizePixel = 0
+    
+    local yPos = 0
+    scanBtn.MouseButton1Click:Connect(function()
+        -- Limpa lista
+        for _, child in pairs(scroll:GetChildren()) do
+            if child:IsA("TextLabel") then
+                child:Destroy()
+            end
+        end
+        
+        yPos = 0
+        
+        -- Escaneia workspace
+        local foundObjects = {}
+        
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") or obj:IsA("Part") then
+                local name = obj.Name:lower()
+                if name:find("chest") or name:find("reward") or name:find("portal") or 
+                   name:find("passage") or name:find("door") or name:find("loot") or
+                   name:find("drop") or name:find("item") or name:find("box") or
+                   name:find("boss") then
+                    table.insert(foundObjects, obj.Name .. " | " .. obj.ClassName)
+                end
+            end
+        end
+        
+        -- Remove duplicatas
+        local unique = {}
+        for _, name in pairs(foundObjects) do
+            unique[name] = true
+        end
+        
+        -- Mostra resultados
+        for name, _ in pairs(unique) do
+            local label = Instance.new("TextLabel", scroll)
+            label.Size = UDim2.new(1, -10, 0, 25)
+            label.Position = UDim2.new(0, 5, 0, yPos)
+            label.Text = name
+            label.TextColor3 = Color3.fromRGB(200, 200, 200)
+            label.Font = Enum.Font.Code
+            label.TextSize = 11
+            label.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+            label.BorderSizePixel = 0
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            
+            yPos = yPos + 27
+        end
+        
+        scroll.CanvasSize = UDim2.new(0, 0, 0, yPos)
+        
+        print("[EXPLORER] Encontrados " .. yPos/27 .. " objetos relevantes!")
+    end)
+end
+
+-- ==================== FUNÇÕES ORIGINAIS ====================
 
 local function getServerData(zombieClient)
     if not zombieClient then return nil end
@@ -63,7 +383,6 @@ local function toggleFly(enabled)
     local rootPart = char:FindFirstChild("HumanoidRootPart")
     
     if enabled then
-        -- ATIVAR FLY
         local bodyVelocity = Instance.new("BodyVelocity", rootPart)
         bodyVelocity.Name = "FlyVelocity"
         bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
@@ -81,7 +400,6 @@ local function toggleFly(enabled)
             local moveDirection = Vector3.new(0, 0, 0)
             local cam = Camera.CFrame
             
-            -- Controles: W A S D Space LeftShift
             if UserInputService:IsKeyDown(Enum.KeyCode.W) then
                 moveDirection = moveDirection + (cam.LookVector * flySpeed)
             end
@@ -110,7 +428,6 @@ local function toggleFly(enabled)
         end)
         
     else
-        -- DESATIVAR FLY
         if flyConnection then
             flyConnection:Disconnect()
             flyConnection = nil
@@ -135,35 +452,18 @@ local function toggleUnderground(enabled)
     if not rootPart or not head then return end
     
     if enabled then
-        -- ATIVAR UNDERGROUND MODE
-        
-        -- Criar uma parte invisível para a câmera E arma
         local cameraPart = Instance.new("Part")
         cameraPart.Name = "UndergroundCameraPart"
         cameraPart.Anchored = true
         cameraPart.CanCollide = false
         cameraPart.Transparency = 1
-        cameraPart.Size = Vector3.new(2, 2, 2)
+        cameraPart.Size = Vector3.new(1, 1, 1)
         cameraPart.CFrame = head.CFrame
         cameraPart.Parent = workspace
         
-        -- Criar Head falsa para a arma seguir
-        local fakeHead = Instance.new("Part")
-        fakeHead.Name = "FakeHead"
-        fakeHead.Anchored = true
-        fakeHead.CanCollide = false
-        fakeHead.Transparency = 1
-        fakeHead.Size = head.Size
-        fakeHead.CFrame = head.CFrame
-        fakeHead.Parent = workspace
-        
-        -- Guardar o subject original da câmera
         originalCameraSubject = Camera.CameraSubject
-        
-        -- Fazer a câmera focar na parte invisível
         Camera.CameraSubject = cameraPart
         
-        -- Criar conexão para manter tudo na posição certa
         local undergroundConnection
         undergroundConnection = RunService.RenderStepped:Connect(function()
             if not isUndergroundEnabled then
@@ -173,128 +473,44 @@ local function toggleUnderground(enabled)
                 return
             end
             
-            if cameraPart and cameraPart.Parent and fakeHead and fakeHead.Parent then
-                -- Posição atual do rootPart (underground)
+            if cameraPart and cameraPart.Parent then
                 local currentPos = rootPart.Position
-                
-                -- Atualizar câmera na altura normal
                 cameraPart.CFrame = CFrame.new(
                     currentPos.X,
                     currentPos.Y + undergroundDepth,
                     currentPos.Z
-                ) * CFrame.Angles(0, math.rad(Camera.CFrame:ToEulerAnglesYXZ()), 0)
-                
-                -- Atualizar fake head na altura normal
-                fakeHead.CFrame = CFrame.new(
-                    currentPos.X,
-                    currentPos.Y + undergroundDepth,
-                    currentPos.Z
                 )
-                
-                -- Mover a arma para a altura normal
-                local tool = char:FindFirstChildOfClass("Tool")
-                if tool then
-                    local handle = tool:FindFirstChild("Handle")
-                    if handle then
-                        -- Posicionar handle na altura da fake head
-                        handle.CFrame = fakeHead.CFrame * CFrame.new(1, 0, -2)
-                    end
-                end
             end
         end)
         
-        -- Descer o corpo do personagem
         rootPart.CFrame = rootPart.CFrame - Vector3.new(0, undergroundDepth, 0)
         
-        -- Desabilitar colisão de todas as partes
         for _, part in pairs(char:GetDescendants()) do
             if part:IsA("BasePart") then
                 part.CanCollide = false
             end
         end
         
-        -- Fazer as partes do corpo invisíveis
-        for _, part in pairs(char:GetDescendants()) do
-            if part:IsA("BasePart") or part:IsA("Decal") then
-                part.Transparency = 1
-            end
-        end
-        
     else
-        -- DESATIVAR UNDERGROUND MODE
-        
-        -- Remover a parte da câmera
         local cameraPart = workspace:FindFirstChild("UndergroundCameraPart")
         if cameraPart then
             cameraPart:Destroy()
         end
         
-        -- Remover fake head
-        local fakeHead = workspace:FindFirstChild("FakeHead")
-        if fakeHead then
-            fakeHead:Destroy()
-        end
-        
-        -- Restaurar camera subject
         if originalCameraSubject then
             Camera.CameraSubject = originalCameraSubject
         else
             Camera.CameraSubject = humanoid
         end
         
-        -- Subir o corpo do personagem
         rootPart.CFrame = rootPart.CFrame + Vector3.new(0, undergroundDepth, 0)
         
-        -- Restaurar colisão
         for _, part in pairs(char:GetDescendants()) do
             if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
                 part.CanCollide = true
             end
         end
-        
-        -- Restaurar visibilidade
-        for _, part in pairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.Transparency = 0
-            elseif part:IsA("Decal") and part.Parent.Name == "Head" then
-                part.Transparency = 0
-            end
-        end
     end
-end
-
-local function performTeleportToTarget()
-    if not isTeleportToTargetEnabled then return end
-    if not currentLockedTarget then return end
-    
-    local char = player.Character
-    if not char then return end
-    local pRoot = char:FindFirstChild("HumanoidRootPart")
-    if not pRoot then return end
-    
-    -- Pegar posição do alvo
-    local targetPos = currentLockedTarget.Position
-    
-    -- Teleportar acima do alvo
-    local teleportPos = Vector3.new(targetPos.X, targetPos.Y + teleportHeight, targetPos.Z)
-    pRoot.CFrame = CFrame.new(teleportPos)
-end
-
-local function performTeleportToTarget()
-    if not isTeleportToTargetEnabled then return end
-    if not currentLockedTarget then return end
-    
-    local char = player.Character
-    if not char then return end
-    local pRoot = char:FindFirstChild("HumanoidRootPart")
-    if not pRoot then return end
-    
-    -- Pegar posição do alvo
-    local targetPos = currentLockedTarget.Position
-    
-    -- Teleportar acima do alvo
-    local teleportPos = Vector3.new(targetPos.X, targetPos.Y + teleportHeight, targetPos.Z)
-    pRoot.CFrame = CFrame.new(teleportPos)
 end
 
 local function toggleNoclip(enabled)
@@ -302,7 +518,6 @@ local function toggleNoclip(enabled)
     if not char then return end
     
     if enabled then
-        -- ATIVAR NOCLIP
         noclipConnection = RunService.Stepped:Connect(function()
             if not isNoclipEnabled then return end
             
@@ -314,7 +529,6 @@ local function toggleNoclip(enabled)
         end)
         
     else
-        -- DESATIVAR NOCLIP
         if noclipConnection then
             noclipConnection:Disconnect()
             noclipConnection = nil
@@ -330,11 +544,9 @@ end
 
 local function toggleReduceMotion(enabled)
     if enabled then
-        -- CONGELAR TUDO - MODO TIJOLO COMPLETO
         for _, zombie in pairs(ZombiesFolder:GetChildren()) do
             local humanoid = zombie:FindFirstChildOfClass("Humanoid")
             if humanoid then
-                -- Parar animações
                 local animator = humanoid:FindFirstChildOfClass("Animator")
                 if animator then
                     for _, track in pairs(animator:GetPlayingAnimationTracks()) do
@@ -344,14 +556,12 @@ local function toggleReduceMotion(enabled)
                     animator:Destroy()
                 end
                 
-                -- Congelar completamente o Humanoid
                 humanoid.WalkSpeed = 0
                 humanoid.JumpPower = 0
                 humanoid.AutoRotate = false
                 humanoid.PlatformStand = true
             end
             
-            -- ANCORAR TODAS AS PARTES - TIJOLO COMPLETO
             for _, part in pairs(zombie:GetDescendants()) do
                 if part:IsA("BasePart") then
                     part.Anchored = true
@@ -361,7 +571,6 @@ local function toggleReduceMotion(enabled)
                 end
             end
             
-            -- Deletar joints/motors
             for _, obj in pairs(zombie:GetDescendants()) do
                 if obj:IsA("Motor6D") or obj:IsA("Weld") or obj:IsA("WeldConstraint") then
                     obj:Destroy()
@@ -403,7 +612,6 @@ local function toggleReduceMotion(enabled)
             end
         end
         
-        -- DESABILITAR TODA FÍSICA DO WORKSPACE
         for _, obj in pairs(workspace:GetDescendants()) do
             if obj:IsA("BodyMover") or obj:IsA("BodyGyro") or obj:IsA("BodyPosition") or 
                obj:IsA("BodyVelocity") or obj:IsA("BodyAngularVelocity") or obj:IsA("BodyForce") then
@@ -412,7 +620,6 @@ local function toggleReduceMotion(enabled)
         end
         
     else
-        -- RESTAURAR MOVIMENTOS
         for _, zombie in pairs(ZombiesFolder:GetChildren()) do
             local humanoid = zombie:FindFirstChildOfClass("Humanoid")
             if humanoid then
@@ -454,30 +661,25 @@ local function toggleLowGraphics(enabled)
     local Terrain = workspace.Terrain
     
     if enabled then
-        -- REDUZIR QUALIDADE GRÁFICA
         settings().Rendering.QualityLevel = 1
         settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04
         
-        -- Lighting
         Lighting.GlobalShadows = false
         Lighting.FogEnd = 100
         Lighting.Brightness = 2
         
-        -- Desabilitar efeitos visuais
         for _, effect in pairs(Lighting:GetChildren()) do
             if effect:IsA("PostEffect") then
                 effect.Enabled = false
             end
         end
         
-        -- Terrain
         Terrain.WaterWaveSize = 0
         Terrain.WaterWaveSpeed = 0
         Terrain.WaterReflectance = 0
         Terrain.WaterTransparency = 0
         Terrain.Decoration = false
         
-        -- Reduzir detalhes de objetos
         for _, obj in pairs(workspace:GetDescendants()) do
             if obj:IsA("ParticleEmitter") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
                 obj.Enabled = false
@@ -488,7 +690,6 @@ local function toggleLowGraphics(enabled)
             end
         end
         
-        -- REMOVER NICKNAMES DOS ZUMBIS
         for _, zombie in pairs(ZombiesFolder:GetChildren()) do
             for _, gui in pairs(zombie:GetDescendants()) do
                 if gui:IsA("BillboardGui") or gui:IsA("SurfaceGui") then
@@ -505,11 +706,9 @@ local function toggleLowGraphics(enabled)
             end
         end
         
-        -- REDUZIR DISTÂNCIA DE RENDERIZAÇÃO
         Camera.MaxAxisFieldOfView = 70
         
     else
-        -- RESTAURAR QUALIDADE NORMAL
         settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
         settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
         
@@ -569,6 +768,16 @@ local function getValidTarget()
     end
     lastTargetUpdate = currentTime
     
+    -- PRIORIDADE BOSS
+    if priorityMode == "boss" or isBossRound then
+        local boss = findBoss()
+        if boss then
+            currentLockedTarget = boss
+            targetLockTime = currentTime
+            return boss
+        end
+    end
+    
     if currentLockedTarget and isZombieValid(currentLockedTarget.Parent) then
         if currentTime - targetLockTime < stickyTime then
             return currentLockedTarget
@@ -588,7 +797,6 @@ local function getValidTarget()
             if hitbox and hum then
                 local dist = (pRoot.Position - hitbox.Position).Magnitude
                 
-                -- VERIFICAR DISTÂNCIA MÁXIMA
                 if dist <= maxLockDistance then
                     if priorityMode == "hp" then
                         if hum.Health > bestVal then
@@ -684,6 +892,8 @@ local function createStrictSlider(parent, text, pos, minV, maxV, default, callba
     input.FocusLost:Connect(function() update(tonumber(input.Text) or default) end)
 end
 
+-- ==================== CRIAR GUI ====================
+
 local screenGui = Instance.new("ScreenGui", player.PlayerGui)
 screenGui.Name = "autosolver_euler"
 local header = Instance.new("Frame", screenGui)
@@ -701,6 +911,7 @@ closeBtn.MouseButton1Click:Connect(function()
     if isFlyEnabled then toggleFly(false) end
     if isNoclipEnabled then toggleNoclip(false) end
     if isUndergroundEnabled then toggleUnderground(false) end
+    if isAutoFarmEnabled then stopAutoFarm() end
     screenGui:Destroy()
     print("[ZOMBIE RNG] Script fechado com sucesso!")
 end)
@@ -715,16 +926,53 @@ end)
 
 local sideBar = Instance.new("Frame", mainBody)
 sideBar.Size = UDim2.new(0, 80, 1, 0); sideBar.BackgroundColor3 = Color3.fromRGB(10, 10, 10); sideBar.BorderSizePixel = 0
+
+-- TABS
+local autoFarmTabBtn = Instance.new("TextButton", sideBar)
+autoFarmTabBtn.Size = UDim2.new(1, 0, 0, 45); autoFarmTabBtn.Text = "autofarm"; autoFarmTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20); autoFarmTabBtn.TextColor3 = Color3.new(1, 1, 1); autoFarmTabBtn.Font = Enum.Font.GothamBold; autoFarmTabBtn.BorderSizePixel = 0; autoFarmTabBtn.TextSize = 12
+
 local combatTabBtn = Instance.new("TextButton", sideBar)
-combatTabBtn.Size = UDim2.new(1, 0, 0, 45); combatTabBtn.Text = "combat"; combatTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20); combatTabBtn.TextColor3 = Color3.new(1, 1, 1); combatTabBtn.Font = Enum.Font.GothamBold; combatTabBtn.BorderSizePixel = 0; combatTabBtn.TextSize = 12
+combatTabBtn.Size = UDim2.new(1, 0, 0, 45); combatTabBtn.Position = UDim2.new(0, 0, 0, 45); combatTabBtn.Text = "combat"; combatTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0); combatTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5); combatTabBtn.Font = Enum.Font.GothamBold; combatTabBtn.BorderSizePixel = 0; combatTabBtn.TextSize = 12
+
 local visualTabBtn = Instance.new("TextButton", sideBar)
-visualTabBtn.Size = UDim2.new(1, 0, 0, 45); visualTabBtn.Position = UDim2.new(0, 0, 0, 45); visualTabBtn.Text = "visuals"; visualTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0); visualTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5); visualTabBtn.Font = Enum.Font.GothamBold; visualTabBtn.BorderSizePixel = 0; visualTabBtn.TextSize = 12
+visualTabBtn.Size = UDim2.new(1, 0, 0, 45); visualTabBtn.Position = UDim2.new(0, 0, 0, 90); visualTabBtn.Text = "visuals"; visualTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0); visualTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5); visualTabBtn.Font = Enum.Font.GothamBold; visualTabBtn.BorderSizePixel = 0; visualTabBtn.TextSize = 12
+
+local explorerTabBtn = Instance.new("TextButton", sideBar)
+explorerTabBtn.Size = UDim2.new(1, 0, 0, 45); explorerTabBtn.Position = UDim2.new(0, 0, 0, 135); explorerTabBtn.Text = "explorer"; explorerTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0); explorerTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5); explorerTabBtn.Font = Enum.Font.GothamBold; explorerTabBtn.BorderSizePixel = 0; explorerTabBtn.TextSize = 12
+
+-- FRAMES
+local autoFarmFrame = Instance.new("Frame", mainBody)
+autoFarmFrame.Size = UDim2.new(1, -100, 1, -20); autoFarmFrame.Position = UDim2.new(0, 90, 0, 10); autoFarmFrame.BackgroundTransparency = 1
 
 local combatFrame = Instance.new("Frame", mainBody)
-combatFrame.Size = UDim2.new(1, -100, 1, -20); combatFrame.Position = UDim2.new(0, 90, 0, 10); combatFrame.BackgroundTransparency = 1
+combatFrame.Size = UDim2.new(1, -100, 1, -20); combatFrame.Position = UDim2.new(0, 90, 0, 10); combatFrame.BackgroundTransparency = 1; combatFrame.Visible = false
 
 local visualFrame = Instance.new("Frame", mainBody)
 visualFrame.Size = UDim2.new(1, -100, 1, -20); visualFrame.Position = UDim2.new(0, 90, 0, 10); visualFrame.BackgroundTransparency = 1; visualFrame.Visible = false
+
+-- AUTO FARM TAB
+createStrictToggle(autoFarmFrame, "enable auto farm", UDim2.new(0,0,0,0), isAutoFarmEnabled, function(v) 
+    isAutoFarmEnabled = v 
+    if v then
+        startAutoFarm()
+    else
+        stopAutoFarm()
+    end
+end)
+
+createStrictToggle(autoFarmFrame, "boss detection", UDim2.new(0,0,0,35), isBossDetectionEnabled, function(v) isBossDetectionEnabled = v end)
+createStrictToggle(autoFarmFrame, "auto collect drops", UDim2.new(0,0,0,70), isAutoCollectEnabled, function(v) isAutoCollectEnabled = v end)
+createStrictSlider(autoFarmFrame, "magnet range", UDim2.new(0,0,0,105), 10, 500, magnetRange, function(v) magnetRange = v end)
+createStrictToggle(autoFarmFrame, "infinite shot (no wall)", UDim2.new(0,0,0,160), isInfiniteShotEnabled, function(v) 
+    isInfiniteShotEnabled = v 
+    if v then
+        enableInfiniteShot()
+    else
+        isWallCheckEnabled = true
+        maxLockDistance = 50
+    end
+end)
+createStrictSlider(autoFarmFrame, "safe underground depth", UDim2.new(0,0,0,195), 5, 30, safeUndergroundDepth, function(v) safeUndergroundDepth = v end)
 
 -- Combat Tab
 createStrictToggle(combatFrame, "camera lock", UDim2.new(0,0,0,0), isLockOnActive, function(v) isLockOnActive = v end)
@@ -762,23 +1010,25 @@ createStrictToggle(visualFrame, "underground", UDim2.new(0,0,0,230), isUndergrou
 end)
 createStrictSlider(visualFrame, "underground depth", UDim2.new(0,0,0,265), 5, 50, undergroundDepth, function(v) undergroundDepth = v end)
 
-combatTabBtn.MouseButton1Click:Connect(function()
-    combatFrame.Visible = true
-    visualFrame.Visible = false
-    combatTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    visualTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    combatTabBtn.TextColor3 = Color3.new(1, 1, 1)
-    visualTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5)
-end)
+-- TAB SWITCHING
+local function switchTab(target)
+    autoFarmFrame.Visible = (target == "autofarm")
+    combatFrame.Visible = (target == "combat")
+    visualFrame.Visible = (target == "visual")
+    
+    autoFarmTabBtn.BackgroundColor3 = (target == "autofarm") and Color3.fromRGB(20, 20, 20) or Color3.fromRGB(0, 0, 0)
+    combatTabBtn.BackgroundColor3 = (target == "combat") and Color3.fromRGB(20, 20, 20) or Color3.fromRGB(0, 0, 0)
+    visualTabBtn.BackgroundColor3 = (target == "visual") and Color3.fromRGB(20, 20, 20) or Color3.fromRGB(0, 0, 0)
+    
+    autoFarmTabBtn.TextColor3 = (target == "autofarm") and Color3.new(1, 1, 1) or Color3.new(0.5, 0.5, 0.5)
+    combatTabBtn.TextColor3 = (target == "combat") and Color3.new(1, 1, 1) or Color3.new(0.5, 0.5, 0.5)
+    visualTabBtn.TextColor3 = (target == "visual") and Color3.new(1, 1, 1) or Color3.new(0.5, 0.5, 0.5)
+end
 
-visualTabBtn.MouseButton1Click:Connect(function()
-    combatFrame.Visible = false
-    visualFrame.Visible = true
-    visualTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-    combatTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    visualTabBtn.TextColor3 = Color3.new(1, 1, 1)
-    combatTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5)
-end)
+autoFarmTabBtn.MouseButton1Click:Connect(function() switchTab("autofarm") end)
+combatTabBtn.MouseButton1Click:Connect(function() switchTab("combat") end)
+visualTabBtn.MouseButton1Click:Connect(function() switchTab("visual") end)
+explorerTabBtn.MouseButton1Click:Connect(function() createObjectExplorer() end)
 
 RunService.Heartbeat:Connect(function()
     if isAutoShootEnabled and isLockOnActive and currentLockedTarget then
@@ -839,3 +1089,7 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         end
     end
 end)
+
+print("[ZOMBIE RNG] Auto Farm System carregado!")
+print("[ZOMBIE RNG] Pressione INSERT para abrir/fechar o menu")
+print("[ZOMBIE RNG] Use a aba EXPLORER para descobrir nomes de objetos no jogo")
