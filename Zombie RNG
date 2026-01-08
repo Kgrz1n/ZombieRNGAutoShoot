@@ -17,9 +17,15 @@ local isLockOnActive = false
 local isShowHitboxEnabled = false
 local isAutoShootEnabled = false
 local isWallCheckEnabled = true
+local isLowGraphicsEnabled = false
+local isReduceMotionEnabled = false
+local isFlyEnabled = false
+local isNoclipEnabled = false
 local lockSmoothness = 0.2
-local shootSpeed = 0.15 -- Velocidade de disparo (em segundos)
-local stickyTime = 2.0 -- Tempo para manter o mesmo alvo (em segundos)
+local shootSpeed = 0.15
+local stickyTime = 2.0
+local flySpeed = 50
+local maxLockDistance = 100
 local lockKey = Enum.KeyCode.T
 local priorityMode = "closest"
 local TARGET_PART_NAME = "Head"
@@ -28,6 +34,9 @@ local targetLockTime = 0
 local isBinding = false
 local isMinimized = false
 local lastShootTime = 0
+
+local flyConnection
+local noclipConnection
 
 local function getServerData(zombieClient)
     if not zombieClient then return nil end
@@ -42,6 +51,140 @@ local function getServerData(zombieClient)
         end
     end
     return nil
+end
+
+local function toggleFly(enabled)
+    local char = player.Character
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    local rootPart = char:FindFirstChild("HumanoidRootPart")
+    
+    if enabled then
+        -- ATIVAR FLY
+        local bodyVelocity = Instance.new("BodyVelocity", rootPart)
+        bodyVelocity.Name = "FlyVelocity"
+        bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        
+        local bodyGyro = Instance.new("BodyGyro", rootPart)
+        bodyGyro.Name = "FlyGyro"
+        bodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+        bodyGyro.P = 9e4
+        bodyGyro.CFrame = rootPart.CFrame
+        
+        flyConnection = RunService.Heartbeat:Connect(function()
+            if not isFlyEnabled then return end
+            
+            local moveDirection = Vector3.new(0, 0, 0)
+            local cam = Camera.CFrame
+            
+            -- Controles: W A S D Space LeftShift
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                moveDirection = moveDirection + (cam.LookVector * flySpeed)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                moveDirection = moveDirection - (cam.LookVector * flySpeed)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                moveDirection = moveDirection - (cam.RightVector * flySpeed)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                moveDirection = moveDirection + (cam.RightVector * flySpeed)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                moveDirection = moveDirection + Vector3.new(0, flySpeed, 0)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                moveDirection = moveDirection - Vector3.new(0, flySpeed, 0)
+            end
+            
+            if bodyVelocity then
+                bodyVelocity.Velocity = moveDirection
+            end
+            if bodyGyro then
+                bodyGyro.CFrame = cam
+            end
+        end)
+        
+    else
+        -- DESATIVAR FLY
+        if flyConnection then
+            flyConnection:Disconnect()
+            flyConnection = nil
+        end
+        
+        if rootPart then
+            local fv = rootPart:FindFirstChild("FlyVelocity")
+            local fg = rootPart:FindFirstChild("FlyGyro")
+            if fv then fv:Destroy() end
+            if fg then fg:Destroy() end
+        end
+    end
+end
+
+local function performTeleportToTarget()
+    if not isTeleportToTargetEnabled then return end
+    if not currentLockedTarget then return end
+    
+    local char = player.Character
+    if not char then return end
+    local pRoot = char:FindFirstChild("HumanoidRootPart")
+    if not pRoot then return end
+    
+    -- Pegar posição do alvo
+    local targetPos = currentLockedTarget.Position
+    
+    -- Teleportar acima do alvo
+    local teleportPos = Vector3.new(targetPos.X, targetPos.Y + teleportHeight, targetPos.Z)
+    pRoot.CFrame = CFrame.new(teleportPos)
+end
+
+local function performTeleportToTarget()
+    if not isTeleportToTargetEnabled then return end
+    if not currentLockedTarget then return end
+    
+    local char = player.Character
+    if not char then return end
+    local pRoot = char:FindFirstChild("HumanoidRootPart")
+    if not pRoot then return end
+    
+    -- Pegar posição do alvo
+    local targetPos = currentLockedTarget.Position
+    
+    -- Teleportar acima do alvo
+    local teleportPos = Vector3.new(targetPos.X, targetPos.Y + teleportHeight, targetPos.Z)
+    pRoot.CFrame = CFrame.new(teleportPos)
+end
+
+local function toggleNoclip(enabled)
+    local char = player.Character
+    if not char then return end
+    
+    if enabled then
+        -- ATIVAR NOCLIP
+        noclipConnection = RunService.Stepped:Connect(function()
+            if not isNoclipEnabled then return end
+            
+            for _, part in pairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end)
+        
+    else
+        -- DESATIVAR NOCLIP
+        if noclipConnection then
+            noclipConnection:Disconnect()
+            noclipConnection = nil
+        end
+        
+        for _, part in pairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = true
+            end
+        end
+    end
 end
 
 local function toggleReduceMotion(enabled)
@@ -199,8 +342,30 @@ local function toggleLowGraphics(enabled)
                 obj.Enabled = false
             elseif obj:IsA("Decal") or obj:IsA("Texture") then
                 obj.Transparency = 1
+            elseif obj:IsA("SurfaceGui") or obj:IsA("BillboardGui") then
+                obj.Enabled = false
             end
         end
+        
+        -- REMOVER NICKNAMES DOS ZUMBIS
+        for _, zombie in pairs(ZombiesFolder:GetChildren()) do
+            for _, gui in pairs(zombie:GetDescendants()) do
+                if gui:IsA("BillboardGui") or gui:IsA("SurfaceGui") then
+                    gui.Enabled = false
+                end
+            end
+        end
+        
+        for _, zombie in pairs(ServerZombies:GetChildren()) do
+            for _, gui in pairs(zombie:GetDescendants()) do
+                if gui:IsA("BillboardGui") or gui:IsA("SurfaceGui") then
+                    gui.Enabled = false
+                end
+            end
+        end
+        
+        -- REDUZIR DISTÂNCIA DE RENDERIZAÇÃO
+        Camera.MaxAxisFieldOfView = 70
         
     else
         -- RESTAURAR QUALIDADE NORMAL
@@ -222,6 +387,8 @@ local function toggleLowGraphics(enabled)
         Terrain.WaterReflectance = 1
         Terrain.WaterTransparency = 0.3
         Terrain.Decoration = true
+        
+        Camera.MaxAxisFieldOfView = 120
     end
 end
 
@@ -250,10 +417,9 @@ local function isZombieValid(zombieClient)
 end
 
 local lastTargetUpdate = 0
-local targetUpdateRate = 0.1 -- Atualiza alvo a cada 0.1 segundos
+local targetUpdateRate = 0.1
 
 local function getValidTarget()
-    -- Só atualizar alvo em intervalos (evita lag)
     local currentTime = tick()
     if currentTime - lastTargetUpdate < targetUpdateRate then
         if currentLockedTarget and isZombieValid(currentLockedTarget.Parent) then
@@ -262,14 +428,12 @@ local function getValidTarget()
     end
     lastTargetUpdate = currentTime
     
-    -- Se tem alvo atual válido e ainda não passou o tempo de sticky
     if currentLockedTarget and isZombieValid(currentLockedTarget.Parent) then
         if currentTime - targetLockTime < stickyTime then
             return currentLockedTarget
         end
     end
     
-    -- Buscar novo alvo
     local bestTarget = nil
     local bestVal = (priorityMode == "hp") and 0 or math.huge
     local char = player.Character
@@ -283,23 +447,24 @@ local function getValidTarget()
             if hitbox and hum then
                 local dist = (pRoot.Position - hitbox.Position).Magnitude
                 
-                -- Removido wallcheck para melhorar performance
-                if priorityMode == "hp" then
-                    if hum.Health > bestVal then
-                        bestVal = hum.Health
-                        bestTarget = hitbox
-                    end
-                elseif priorityMode == "closest" then
-                    if dist < bestVal then
-                        bestVal = dist
-                        bestTarget = hitbox
+                -- VERIFICAR DISTÂNCIA MÁXIMA
+                if dist <= maxLockDistance then
+                    if priorityMode == "hp" then
+                        if hum.Health > bestVal then
+                            bestVal = hum.Health
+                            bestTarget = hitbox
+                        end
+                    elseif priorityMode == "closest" then
+                        if dist < bestVal then
+                            bestVal = dist
+                            bestTarget = hitbox
+                        end
                     end
                 end
             end
         end
     end
     
-    -- Se encontrou novo alvo, resetar timer
     if bestTarget and bestTarget ~= currentLockedTarget then
         targetLockTime = currentTime
     end
@@ -318,12 +483,10 @@ local function performAutoShoot()
     local currentTime = tick()
     if currentTime - lastShootTime < shootDelay then return end
     
-    -- MÉTODO 1: mouse1click() - Função nativa dos executors
     pcall(function()
         mouse1click()
     end)
     
-    -- MÉTODO 2: mouse1press e mouse1release
     pcall(function()
         mouse1press()
         task.wait(0.05)
@@ -387,28 +550,19 @@ header.Size = UDim2.new(0, 340, 0, 35); header.Position = UDim2.new(0.5, -170, 0
 local headerTxt = Instance.new("TextLabel", header)
 headerTxt.Size = UDim2.new(1, -70, 1, 0); headerTxt.Position = UDim2.new(0, 10, 0, 0); headerTxt.Text = "zombie rng | dc: @deadshizik"; headerTxt.TextColor3 = Color3.new(1, 1, 1); headerTxt.Font = Enum.Font.GothamBold; headerTxt.TextSize = 13; headerTxt.BackgroundTransparency = 1; headerTxt.TextXAlignment = Enum.TextXAlignment.Left
 local mainBody = Instance.new("Frame", header)
-mainBody.Size = UDim2.new(1, 0, 0, 370); mainBody.Position = UDim2.new(0, 0, 1, 1); mainBody.BackgroundColor3 = Color3.fromRGB(0, 0, 0); mainBody.BorderSizePixel = 0
+mainBody.Size = UDim2.new(1, 0, 0, 420); mainBody.Position = UDim2.new(0, 0, 1, 1); mainBody.BackgroundColor3 = Color3.fromRGB(0, 0, 0); mainBody.BorderSizePixel = 0
 
--- Botão de Fechar (X)
 local closeBtn = Instance.new("TextButton", header)
 closeBtn.Size = UDim2.new(0, 25, 0, 25); closeBtn.Position = UDim2.new(1, -60, 0, 5); closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50); closeBtn.BorderSizePixel = 0; closeBtn.Text = "X"; closeBtn.TextColor3 = Color3.new(1, 1, 1); closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 16; closeBtn.ZIndex = 10
 closeBtn.MouseButton1Click:Connect(function()
-    -- Restaurar gráficos antes de fechar
-    if isLowGraphicsEnabled then
-        toggleLowGraphics(false)
-    end
-    if isReduceMotionEnabled then
-        toggleReduceMotion(false)
-    end
-    
-    -- Destruir GUI
+    if isLowGraphicsEnabled then toggleLowGraphics(false) end
+    if isReduceMotionEnabled then toggleReduceMotion(false) end
+    if isFlyEnabled then toggleFly(false) end
+    if isNoclipEnabled then toggleNoclip(false) end
     screenGui:Destroy()
-    
-    -- Avisar que foi fechado
     print("[ZOMBIE RNG] Script fechado com sucesso!")
 end)
 
--- Botão de Minimizar (-)
 local minimizeBtn = Instance.new("TextButton", header)
 minimizeBtn.Size = UDim2.new(0, 25, 0, 25); minimizeBtn.Position = UDim2.new(1, -30, 0, 5); minimizeBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 55); minimizeBtn.BorderSizePixel = 0; minimizeBtn.Text = "-"; minimizeBtn.TextColor3 = Color3.new(1, 1, 1); minimizeBtn.Font = Enum.Font.GothamBold; minimizeBtn.TextSize = 18; minimizeBtn.ZIndex = 10
 minimizeBtn.MouseButton1Click:Connect(function()
@@ -416,26 +570,32 @@ minimizeBtn.MouseButton1Click:Connect(function()
     mainBody.Visible = not isMinimized
     minimizeBtn.Text = isMinimized and "+" or "-"
 end)
+
 local sideBar = Instance.new("Frame", mainBody)
 sideBar.Size = UDim2.new(0, 80, 1, 0); sideBar.BackgroundColor3 = Color3.fromRGB(10, 10, 10); sideBar.BorderSizePixel = 0
 local combatTabBtn = Instance.new("TextButton", sideBar)
-combatTabBtn.Size = UDim2.new(1, 0, 0, 45); combatTabBtn.Text = "combat"; combatTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20); combatTabBtn.TextColor3 = Color3.new(1, 1, 1); combatTabBtn.Font = Enum.Font.GothamBold; combatTabBtn.BorderSizePixel = 0
+combatTabBtn.Size = UDim2.new(1, 0, 0, 45); combatTabBtn.Text = "combat"; combatTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20); combatTabBtn.TextColor3 = Color3.new(1, 1, 1); combatTabBtn.Font = Enum.Font.GothamBold; combatTabBtn.BorderSizePixel = 0; combatTabBtn.TextSize = 12
 local visualTabBtn = Instance.new("TextButton", sideBar)
-visualTabBtn.Size = UDim2.new(1, 0, 0, 45); visualTabBtn.Position = UDim2.new(0, 0, 0, 45); visualTabBtn.Text = "visuals"; visualTabBtn.BackgroundTransparency = 1; visualTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5); visualTabBtn.Font = Enum.Font.GothamBold; visualTabBtn.BorderSizePixel = 0
-local combatFrame = Instance.new("Frame", mainBody); combatFrame.Size = UDim2.new(1, -100, 1, -20); combatFrame.Position = UDim2.new(0, 90, 0, 10); combatFrame.BackgroundTransparency = 1
-local visualFrame = Instance.new("Frame", mainBody); visualFrame.Size = UDim2.new(1, -100, 1, -20); visualFrame.Position = UDim2.new(0, 90, 0, 10); visualFrame.BackgroundTransparency = 1; visualFrame.Visible = false
+visualTabBtn.Size = UDim2.new(1, 0, 0, 45); visualTabBtn.Position = UDim2.new(0, 0, 0, 45); visualTabBtn.Text = "visuals"; visualTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0); visualTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5); visualTabBtn.Font = Enum.Font.GothamBold; visualTabBtn.BorderSizePixel = 0; visualTabBtn.TextSize = 12
 
--- Combat Tab Options
+local combatFrame = Instance.new("Frame", mainBody)
+combatFrame.Size = UDim2.new(1, -100, 1, -20); combatFrame.Position = UDim2.new(0, 90, 0, 10); combatFrame.BackgroundTransparency = 1
+
+local visualFrame = Instance.new("Frame", mainBody)
+visualFrame.Size = UDim2.new(1, -100, 1, -20); visualFrame.Position = UDim2.new(0, 90, 0, 10); visualFrame.BackgroundTransparency = 1; visualFrame.Visible = false
+
+-- Combat Tab
 createStrictToggle(combatFrame, "camera lock", UDim2.new(0,0,0,0), isLockOnActive, function(v) isLockOnActive = v end)
 local bindBtn = Instance.new("TextButton", combatFrame)
 bindBtn.Size = UDim2.new(1, 0, 0, 30); bindBtn.Position = UDim2.new(0,0,0,35); bindBtn.BackgroundColor3 = Color3.fromRGB(20,20,20); bindBtn.Text = "keybind: " .. lockKey.Name:lower(); bindBtn.TextColor3 = Color3.new(1,1,1); bindBtn.Font = Enum.Font.Code; bindBtn.TextSize = 11; bindBtn.BorderSizePixel = 1; bindBtn.BorderColor3 = Color3.fromRGB(50,50,50)
 bindBtn.MouseButton1Click:Connect(function() isBinding = true; bindBtn.Text = "press any key..." end)
 createStrictSlider(combatFrame, "lock smoothness", UDim2.new(0,0,0,75), 0.05, 1, lockSmoothness, function(v) lockSmoothness = v end)
-createStrictToggle(combatFrame, "auto shoot", UDim2.new(0,0,0,130), isAutoShootEnabled, function(v) isAutoShootEnabled = v end)
-createStrictSlider(combatFrame, "shoot speed", UDim2.new(0,0,0,165), 0.05, 0.5, shootSpeed, function(v) shootDelay = v end)
-createStrictSlider(combatFrame, "sticky target", UDim2.new(0,0,0,220), 0.5, 5, stickyTime, function(v) stickyTime = v end)
+createStrictSlider(combatFrame, "max lock distance", UDim2.new(0,0,0,130), 10, 500, maxLockDistance, function(v) maxLockDistance = v end)
+createStrictToggle(combatFrame, "auto shoot", UDim2.new(0,0,0,185), isAutoShootEnabled, function(v) isAutoShootEnabled = v end)
+createStrictSlider(combatFrame, "shoot speed", UDim2.new(0,0,0,220), 0.05, 0.5, shootSpeed, function(v) shootDelay = v end)
+createStrictSlider(combatFrame, "sticky target", UDim2.new(0,0,0,275), 0.5, 5, stickyTime, function(v) stickyTime = v end)
 
--- Visual Tab Options
+-- Visual Tab
 createStrictToggle(visualFrame, "hitbox outline", UDim2.new(0,0,0,0), isShowHitboxEnabled, function(v) isShowHitboxEnabled = v end)
 createStrictToggle(visualFrame, "low graphics", UDim2.new(0,0,0,35), isLowGraphicsEnabled, function(v) 
     isLowGraphicsEnabled = v 
@@ -445,28 +605,42 @@ createStrictToggle(visualFrame, "reduce motion", UDim2.new(0,0,0,70), isReduceMo
     isReduceMotionEnabled = v 
     toggleReduceMotion(v)
 end)
+createStrictToggle(visualFrame, "fly", UDim2.new(0,0,0,105), isFlyEnabled, function(v) 
+    isFlyEnabled = v 
+    toggleFly(v)
+end)
+createStrictSlider(visualFrame, "fly speed", UDim2.new(0,0,0,140), 10, 200, flySpeed, function(v) flySpeed = v end)
+createStrictToggle(visualFrame, "noclip", UDim2.new(0,0,0,195), isNoclipEnabled, function(v) 
+    isNoclipEnabled = v 
+    toggleNoclip(v)
+end)
 
 combatTabBtn.MouseButton1Click:Connect(function()
-    combatFrame.Visible, visualFrame.Visible = true, false
-    combatTabBtn.BackgroundColor3, visualTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20), Color3.fromRGB(0, 0, 0)
-    combatTabBtn.TextColor3, visualTabBtn.TextColor3 = Color3.new(1,1,1), Color3.new(0.5,0.5,0.5)
-end)
-visualTabBtn.MouseButton1Click:Connect(function()
-    combatFrame.Visible, visualFrame.Visible = false, true
-    visualTabBtn.BackgroundColor3, combatTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20), Color3.fromRGB(0, 0, 0)
-    visualTabBtn.TextColor3, combatTabBtn.TextColor3 = Color3.new(1,1,1), Color3.new(0.5,0.5,0.5)
+    combatFrame.Visible = true
+    visualFrame.Visible = false
+    combatTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    visualTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    combatTabBtn.TextColor3 = Color3.new(1, 1, 1)
+    visualTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5)
 end)
 
--- Auto-shoot loop (agora mais rápido e eficiente)
-local shootConnection
-shootConnection = RunService.Heartbeat:Connect(function()
+visualTabBtn.MouseButton1Click:Connect(function()
+    combatFrame.Visible = false
+    visualFrame.Visible = true
+    visualTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    combatTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    visualTabBtn.TextColor3 = Color3.new(1, 1, 1)
+    combatTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5)
+end)
+
+RunService.Heartbeat:Connect(function()
     if isAutoShootEnabled and isLockOnActive and currentLockedTarget then
         performAutoShoot()
     end
 end)
 
 local lastVisualUpdate = 0
-local visualUpdateRate = 0.2 -- Atualiza visuais a cada 0.2 segundos
+local visualUpdateRate = 0.2
 
 RunService.RenderStepped:Connect(function(dt)
     if isLockOnActive then
@@ -478,7 +652,6 @@ RunService.RenderStepped:Connect(function(dt)
         end
     end
     
-    -- Otimização: atualizar hitboxes em intervalos
     local currentTime = tick()
     if currentTime - lastVisualUpdate >= visualUpdateRate then
         lastVisualUpdate = currentTime
@@ -506,10 +679,16 @@ end)
 
 UserInputService.InputBegan:Connect(function(input, gpe)
     if isBinding and input.UserInputType == Enum.UserInputType.Keyboard then
-        lockKey = input.KeyCode; bindBtn.Text = "keybind: " .. lockKey.Name:lower(); isBinding = false; return
+        lockKey = input.KeyCode
+        bindBtn.Text = "keybind: " .. lockKey.Name:lower()
+        isBinding = false
+        return
     end
     if not gpe then
-        if input.KeyCode == Enum.KeyCode.Insert then header.Visible = not header.Visible
-        elseif input.KeyCode == lockKey then isLockOnActive = not isLockOnActive end
+        if input.KeyCode == Enum.KeyCode.Insert then 
+            header.Visible = not header.Visible
+        elseif input.KeyCode == lockKey then 
+            isLockOnActive = not isLockOnActive 
+        end
     end
 end)
