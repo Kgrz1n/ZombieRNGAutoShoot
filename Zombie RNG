@@ -21,11 +21,13 @@ local isLowGraphicsEnabled = false
 local isReduceMotionEnabled = false
 local isFlyEnabled = false
 local isNoclipEnabled = false
+local isUndergroundEnabled = false
 local lockSmoothness = 0.2
 local shootSpeed = 0.15
 local stickyTime = 2.0
 local flySpeed = 50
-local maxLockDistance = 100
+local maxLockDistance = 50
+local undergroundDepth = 15
 local lockKey = Enum.KeyCode.T
 local priorityMode = "closest"
 local TARGET_PART_NAME = "Head"
@@ -34,6 +36,7 @@ local targetLockTime = 0
 local isBinding = false
 local isMinimized = false
 local lastShootTime = 0
+local originalCameraSubject = nil
 
 local flyConnection
 local noclipConnection
@@ -118,6 +121,144 @@ local function toggleFly(enabled)
             local fg = rootPart:FindFirstChild("FlyGyro")
             if fv then fv:Destroy() end
             if fg then fg:Destroy() end
+        end
+    end
+end
+
+local function toggleUnderground(enabled)
+    local char = player.Character
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    local rootPart = char:FindFirstChild("HumanoidRootPart")
+    local head = char:FindFirstChild("Head")
+    
+    if not rootPart or not head then return end
+    
+    if enabled then
+        -- ATIVAR UNDERGROUND MODE
+        
+        -- Criar uma parte invisível para a câmera E arma
+        local cameraPart = Instance.new("Part")
+        cameraPart.Name = "UndergroundCameraPart"
+        cameraPart.Anchored = true
+        cameraPart.CanCollide = false
+        cameraPart.Transparency = 1
+        cameraPart.Size = Vector3.new(2, 2, 2)
+        cameraPart.CFrame = head.CFrame
+        cameraPart.Parent = workspace
+        
+        -- Criar Head falsa para a arma seguir
+        local fakeHead = Instance.new("Part")
+        fakeHead.Name = "FakeHead"
+        fakeHead.Anchored = true
+        fakeHead.CanCollide = false
+        fakeHead.Transparency = 1
+        fakeHead.Size = head.Size
+        fakeHead.CFrame = head.CFrame
+        fakeHead.Parent = workspace
+        
+        -- Guardar o subject original da câmera
+        originalCameraSubject = Camera.CameraSubject
+        
+        -- Fazer a câmera focar na parte invisível
+        Camera.CameraSubject = cameraPart
+        
+        -- Criar conexão para manter tudo na posição certa
+        local undergroundConnection
+        undergroundConnection = RunService.RenderStepped:Connect(function()
+            if not isUndergroundEnabled then
+                if undergroundConnection then
+                    undergroundConnection:Disconnect()
+                end
+                return
+            end
+            
+            if cameraPart and cameraPart.Parent and fakeHead and fakeHead.Parent then
+                -- Posição atual do rootPart (underground)
+                local currentPos = rootPart.Position
+                
+                -- Atualizar câmera na altura normal
+                cameraPart.CFrame = CFrame.new(
+                    currentPos.X,
+                    currentPos.Y + undergroundDepth,
+                    currentPos.Z
+                ) * CFrame.Angles(0, math.rad(Camera.CFrame:ToEulerAnglesYXZ()), 0)
+                
+                -- Atualizar fake head na altura normal
+                fakeHead.CFrame = CFrame.new(
+                    currentPos.X,
+                    currentPos.Y + undergroundDepth,
+                    currentPos.Z
+                )
+                
+                -- Mover a arma para a altura normal
+                local tool = char:FindFirstChildOfClass("Tool")
+                if tool then
+                    local handle = tool:FindFirstChild("Handle")
+                    if handle then
+                        -- Posicionar handle na altura da fake head
+                        handle.CFrame = fakeHead.CFrame * CFrame.new(1, 0, -2)
+                    end
+                end
+            end
+        end)
+        
+        -- Descer o corpo do personagem
+        rootPart.CFrame = rootPart.CFrame - Vector3.new(0, undergroundDepth, 0)
+        
+        -- Desabilitar colisão de todas as partes
+        for _, part in pairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+        
+        -- Fazer as partes do corpo invisíveis
+        for _, part in pairs(char:GetDescendants()) do
+            if part:IsA("BasePart") or part:IsA("Decal") then
+                part.Transparency = 1
+            end
+        end
+        
+    else
+        -- DESATIVAR UNDERGROUND MODE
+        
+        -- Remover a parte da câmera
+        local cameraPart = workspace:FindFirstChild("UndergroundCameraPart")
+        if cameraPart then
+            cameraPart:Destroy()
+        end
+        
+        -- Remover fake head
+        local fakeHead = workspace:FindFirstChild("FakeHead")
+        if fakeHead then
+            fakeHead:Destroy()
+        end
+        
+        -- Restaurar camera subject
+        if originalCameraSubject then
+            Camera.CameraSubject = originalCameraSubject
+        else
+            Camera.CameraSubject = humanoid
+        end
+        
+        -- Subir o corpo do personagem
+        rootPart.CFrame = rootPart.CFrame + Vector3.new(0, undergroundDepth, 0)
+        
+        -- Restaurar colisão
+        for _, part in pairs(char:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                part.CanCollide = true
+            end
+        end
+        
+        -- Restaurar visibilidade
+        for _, part in pairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.Transparency = 0
+            elseif part:IsA("Decal") and part.Parent.Name == "Head" then
+                part.Transparency = 0
+            end
         end
     end
 end
@@ -550,7 +691,7 @@ header.Size = UDim2.new(0, 340, 0, 35); header.Position = UDim2.new(0.5, -170, 0
 local headerTxt = Instance.new("TextLabel", header)
 headerTxt.Size = UDim2.new(1, -70, 1, 0); headerTxt.Position = UDim2.new(0, 10, 0, 0); headerTxt.Text = "zombie rng | dc: @deadshizik"; headerTxt.TextColor3 = Color3.new(1, 1, 1); headerTxt.Font = Enum.Font.GothamBold; headerTxt.TextSize = 13; headerTxt.BackgroundTransparency = 1; headerTxt.TextXAlignment = Enum.TextXAlignment.Left
 local mainBody = Instance.new("Frame", header)
-mainBody.Size = UDim2.new(1, 0, 0, 420); mainBody.Position = UDim2.new(0, 0, 1, 1); mainBody.BackgroundColor3 = Color3.fromRGB(0, 0, 0); mainBody.BorderSizePixel = 0
+mainBody.Size = UDim2.new(1, 0, 0, 470); mainBody.Position = UDim2.new(0, 0, 1, 1); mainBody.BackgroundColor3 = Color3.fromRGB(0, 0, 0); mainBody.BorderSizePixel = 0
 
 local closeBtn = Instance.new("TextButton", header)
 closeBtn.Size = UDim2.new(0, 25, 0, 25); closeBtn.Position = UDim2.new(1, -60, 0, 5); closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50); closeBtn.BorderSizePixel = 0; closeBtn.Text = "X"; closeBtn.TextColor3 = Color3.new(1, 1, 1); closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 16; closeBtn.ZIndex = 10
@@ -559,6 +700,7 @@ closeBtn.MouseButton1Click:Connect(function()
     if isReduceMotionEnabled then toggleReduceMotion(false) end
     if isFlyEnabled then toggleFly(false) end
     if isNoclipEnabled then toggleNoclip(false) end
+    if isUndergroundEnabled then toggleUnderground(false) end
     screenGui:Destroy()
     print("[ZOMBIE RNG] Script fechado com sucesso!")
 end)
@@ -590,7 +732,7 @@ local bindBtn = Instance.new("TextButton", combatFrame)
 bindBtn.Size = UDim2.new(1, 0, 0, 30); bindBtn.Position = UDim2.new(0,0,0,35); bindBtn.BackgroundColor3 = Color3.fromRGB(20,20,20); bindBtn.Text = "keybind: " .. lockKey.Name:lower(); bindBtn.TextColor3 = Color3.new(1,1,1); bindBtn.Font = Enum.Font.Code; bindBtn.TextSize = 11; bindBtn.BorderSizePixel = 1; bindBtn.BorderColor3 = Color3.fromRGB(50,50,50)
 bindBtn.MouseButton1Click:Connect(function() isBinding = true; bindBtn.Text = "press any key..." end)
 createStrictSlider(combatFrame, "lock smoothness", UDim2.new(0,0,0,75), 0.05, 1, lockSmoothness, function(v) lockSmoothness = v end)
-createStrictSlider(combatFrame, "max lock distance", UDim2.new(0,0,0,130), 10, 500, maxLockDistance, function(v) maxLockDistance = v end)
+createStrictSlider(combatFrame, "max lock distance", UDim2.new(0,0,0,130), 1, 500, maxLockDistance, function(v) maxLockDistance = v end)
 createStrictToggle(combatFrame, "auto shoot", UDim2.new(0,0,0,185), isAutoShootEnabled, function(v) isAutoShootEnabled = v end)
 createStrictSlider(combatFrame, "shoot speed", UDim2.new(0,0,0,220), 0.05, 0.5, shootSpeed, function(v) shootDelay = v end)
 createStrictSlider(combatFrame, "sticky target", UDim2.new(0,0,0,275), 0.5, 5, stickyTime, function(v) stickyTime = v end)
@@ -614,6 +756,11 @@ createStrictToggle(visualFrame, "noclip", UDim2.new(0,0,0,195), isNoclipEnabled,
     isNoclipEnabled = v 
     toggleNoclip(v)
 end)
+createStrictToggle(visualFrame, "underground", UDim2.new(0,0,0,230), isUndergroundEnabled, function(v) 
+    isUndergroundEnabled = v 
+    toggleUnderground(v)
+end)
+createStrictSlider(visualFrame, "underground depth", UDim2.new(0,0,0,265), 5, 50, undergroundDepth, function(v) undergroundDepth = v end)
 
 combatTabBtn.MouseButton1Click:Connect(function()
     combatFrame.Visible = true
