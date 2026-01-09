@@ -1,6 +1,3 @@
--- note: you can modify ts however you want, i don't give a fuck, js credit my discord please - @deadshizik
--- AUTO FARM SYSTEM ADDED
-
 local player = game.Players.LocalPlayer
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -21,13 +18,14 @@ local isAutoCollectEnabled = true
 local isInfiniteShotEnabled = false
 local magnetRange = 100
 local safeUndergroundDepth = 10
-local autoFarmMode = "underground" -- "underground" ou "fly"
+local autoFarmMode = "underground"
 local currentRound = 0
 local isBossRound = false
 local lastShakeTime = 0
 
 -- ==================== VARIÁVEIS ORIGINAIS ====================
 local isLockOnActive = false
+local isUndergroundCameraLock = false -- NOVO: câmera de baixo para cima
 local isShowHitboxEnabled = false
 local isAutoShootEnabled = false
 local isWallCheckEnabled = true
@@ -59,7 +57,6 @@ local autoFarmConnection
 -- ==================== FUNÇÕES AUTO FARM ====================
 
 local function detectScreenShake()
-    -- Detecta tremida de tela (boss spawn)
     local currentPos = Camera.CFrame.Position
     task.wait(0.1)
     local newPos = Camera.CFrame.Position
@@ -93,10 +90,8 @@ local function findBoss()
 end
 
 local function detectRoundFromUI()
-    -- Tenta detectar o round atual pela UI
     local playerGui = player:WaitForChild("PlayerGui")
     
-    -- Procura por TextLabels que possam conter "Round" ou número
     for _, gui in pairs(playerGui:GetDescendants()) do
         if gui:IsA("TextLabel") then
             local text = gui.Text:lower()
@@ -114,25 +109,26 @@ local function detectRoundFromUI()
 end
 
 local function findNearbyDrops()
-    -- Procura por drops/baús próximos
     local char = player.Character
     if not char then return {} end
     local pRoot = char:FindFirstChild("HumanoidRootPart")
     if not pRoot then return {} end
     
     local drops = {}
+    local dropNames = {"chestspawn", "mysterybox", "door", "rewardchest", "ammobox", "bombchest", "chest", "reward", "loot", "drop", "item", "box", "mystery"}
     
     for _, obj in pairs(workspace:GetDescendants()) do
         if obj:IsA("Model") or obj:IsA("Part") then
             local name = obj.Name:lower()
-            -- Procura por palavras-chave de itens/baús
-            if name:find("chest") or name:find("reward") or name:find("loot") or 
-               name:find("drop") or name:find("item") or name:find("box") then
-                local pos = obj:IsA("Model") and obj:GetPivot().Position or obj.Position
-                local dist = (pRoot.Position - pos).Magnitude
-                
-                if dist <= magnetRange then
-                    table.insert(drops, {object = obj, distance = dist})
+            for _, dropName in pairs(dropNames) do
+                if name:find(dropName) then
+                    local pos = obj:IsA("Model") and obj:GetPivot().Position or obj.Position
+                    local dist = (pRoot.Position - pos).Magnitude
+                    
+                    if dist <= magnetRange then
+                        table.insert(drops, {object = obj, distance = dist})
+                    end
+                    break
                 end
             end
         end
@@ -152,8 +148,10 @@ local function activateMagnet()
     local pRoot = char:FindFirstChild("HumanoidRootPart")
     if not pRoot then return end
     
-    -- Teleporta para cada drop
-    for _, drop in pairs(drops) do
+    table.sort(drops, function(a, b) return a.distance < b.distance end)
+    
+    for i, drop in pairs(drops) do
+        if i > 3 then break end
         local pos = drop.object:IsA("Model") and drop.object:GetPivot().Position or drop.object.Position
         pRoot.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
         task.wait(0.2)
@@ -162,7 +160,6 @@ local function activateMagnet()
 end
 
 local function enableInfiniteShot()
-    -- Desabilita verificação de parede para tiro atravessar
     isWallCheckEnabled = false
     maxLockDistance = 999999
 end
@@ -186,7 +183,6 @@ local function ensureSafePosition()
             isFlyEnabled = true
             toggleFly(true)
         end
-        -- Mantém altura segura
         if pRoot.Position.Y < 50 then
             pRoot.CFrame = pRoot.CFrame + Vector3.new(0, 50, 0)
         end
@@ -200,42 +196,36 @@ local function startAutoFarm()
     
     print("[AUTO FARM] Sistema iniciado!")
     
-    -- Ativa proteções
     ensureSafePosition()
     
     if isInfiniteShotEnabled then
         enableInfiniteShot()
     end
     
-    -- Ativa combat necessário
-    isLockOnActive = true
+    isUndergroundCameraLock = true
+    isLockOnActive = false
     isAutoShootEnabled = true
     
     autoFarmConnection = RunService.Heartbeat:Connect(function()
         if not isAutoFarmEnabled then return end
         
-        -- Detecta round
         detectRoundFromUI()
         
-        -- Se for round de boss, prioriza boss
         if isBossDetectionEnabled and isBossRound then
             local boss = findBoss()
             if boss then
                 currentLockedTarget = boss
                 priorityMode = "boss"
             else
-                -- Boss morreu, volta ao normal
                 isBossRound = false
                 priorityMode = "closest"
             end
         end
         
-        -- Coleta drops automaticamente
-        if isAutoCollectEnabled then
-            activateMagnet()
+        if isAutoCollectEnabled and tick() % 3 < 0.1 then
+            task.spawn(activateMagnet)
         end
         
-        -- Garante posição segura
         ensureSafePosition()
     end)
 end
@@ -247,6 +237,7 @@ local function stopAutoFarm()
     end
     
     isLockOnActive = false
+    isUndergroundCameraLock = false
     isAutoShootEnabled = false
     
     print("[AUTO FARM] Sistema parado!")
@@ -307,7 +298,6 @@ local function createObjectExplorer()
     
     local yPos = 0
     scanBtn.MouseButton1Click:Connect(function()
-        -- Limpa lista
         for _, child in pairs(scroll:GetChildren()) do
             if child:IsA("TextLabel") then
                 child:Destroy()
@@ -316,7 +306,6 @@ local function createObjectExplorer()
         
         yPos = 0
         
-        -- Escaneia workspace
         local foundObjects = {}
         
         for _, obj in pairs(workspace:GetDescendants()) do
@@ -325,19 +314,17 @@ local function createObjectExplorer()
                 if name:find("chest") or name:find("reward") or name:find("portal") or 
                    name:find("passage") or name:find("door") or name:find("loot") or
                    name:find("drop") or name:find("item") or name:find("box") or
-                   name:find("boss") then
+                   name:find("boss") or name:find("mystery") or name:find("ammo") then
                     table.insert(foundObjects, obj.Name .. " | " .. obj.ClassName)
                 end
             end
         end
         
-        -- Remove duplicatas
         local unique = {}
         for _, name in pairs(foundObjects) do
             unique[name] = true
         end
         
-        -- Mostra resultados
         for name, _ in pairs(unique) do
             local label = Instance.new("TextLabel", scroll)
             label.Size = UDim2.new(1, -10, 0, 25)
@@ -768,7 +755,6 @@ local function getValidTarget()
     end
     lastTargetUpdate = currentTime
     
-    -- PRIORIDADE BOSS
     if priorityMode == "boss" or isBossRound then
         local boss = findBoss()
         if boss then
@@ -825,17 +811,32 @@ end
 local lastShootTime = 0
 local shootDelay = 0.15
 
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
 local function performAutoShoot()
-    if not isAutoShootEnabled or not isLockOnActive then return end
+    if not isAutoShootEnabled then return end
+    if not (isLockOnActive or isUndergroundCameraLock) then return end
     if not currentLockedTarget then return end
     
     local currentTime = tick()
     if currentTime - lastShootTime < shootDelay then return end
     
-    pcall(function()
+    -- MÉTODO 1: Tenta mouse1click primeiro
+    local success1 = pcall(function()
         mouse1click()
     end)
     
+    -- MÉTODO 2: Se não funcionar, tenta VirtualInputManager
+    if not success1 then
+        pcall(function()
+            local mouse = player:GetMouse()
+            VirtualInputManager:SendMouseButtonEvent(mouse.X, mouse.Y, 0, true, game, 0)
+            task.wait(0.05)
+            VirtualInputManager:SendMouseButtonEvent(mouse.X, mouse.Y, 0, false, game, 0)
+        end)
+    end
+    
+    -- MÉTODO 3: Fallback para mouse1press/release
     pcall(function()
         mouse1press()
         task.wait(0.05)
@@ -899,22 +900,11 @@ screenGui.Name = "autosolver_euler"
 local header = Instance.new("Frame", screenGui)
 header.Size = UDim2.new(0, 340, 0, 35); header.Position = UDim2.new(0.5, -170, 0.3, 0); header.BackgroundColor3 = Color3.fromRGB(30, 30, 30); header.BorderSizePixel = 0; header.Active = true; header.Draggable = true
 local headerTxt = Instance.new("TextLabel", header)
-headerTxt.Size = UDim2.new(1, -70, 1, 0); headerTxt.Position = UDim2.new(0, 10, 0, 0); headerTxt.Text = "zombie rng | dc: @deadshizik"; headerTxt.TextColor3 = Color3.new(1, 1, 1); headerTxt.Font = Enum.Font.GothamBold; headerTxt.TextSize = 13; headerTxt.BackgroundTransparency = 1; headerTxt.TextXAlignment = Enum.TextXAlignment.Left
+headerTxt.Size = UDim2.new(1, -70, 1, 0); headerTxt.Position = UDim2.new(0, 10, 0, 0); headerTxt.Text = "zombie rng | dc: Grz1n"; headerTxt.TextColor3 = Color3.new(1, 1, 1); headerTxt.Font = Enum.Font.GothamBold; headerTxt.TextSize = 13; headerTxt.BackgroundTransparency = 1; headerTxt.TextXAlignment = Enum.TextXAlignment.Left
 local mainBody = Instance.new("Frame", header)
 mainBody.Size = UDim2.new(1, 0, 0, 470); mainBody.Position = UDim2.new(0, 0, 1, 1); mainBody.BackgroundColor3 = Color3.fromRGB(0, 0, 0); mainBody.BorderSizePixel = 0
 
-local closeBtn = Instance.new("TextButton", header)
-closeBtn.Size = UDim2.new(0, 25, 0, 25); closeBtn.Position = UDim2.new(1, -60, 0, 5); closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50); closeBtn.BorderSizePixel = 0; closeBtn.Text = "X"; closeBtn.TextColor3 = Color3.new(1, 1, 1); closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 16; closeBtn.ZIndex = 10
-closeBtn.MouseButton1Click:Connect(function()
-    if isLowGraphicsEnabled then toggleLowGraphics(false) end
-    if isReduceMotionEnabled then toggleReduceMotion(false) end
-    if isFlyEnabled then toggleFly(false) end
-    if isNoclipEnabled then toggleNoclip(false) end
-    if isUndergroundEnabled then toggleUnderground(false) end
-    if isAutoFarmEnabled then stopAutoFarm() end
-    screenGui:Destroy()
-    print("[ZOMBIE RNG] Script fechado com sucesso!")
-end)
+-- BOTÃO X REMOVIDO PARA EVITAR FECHAR ACIDENTALMENTE
 
 local minimizeBtn = Instance.new("TextButton", header)
 minimizeBtn.Size = UDim2.new(0, 25, 0, 25); minimizeBtn.Position = UDim2.new(1, -30, 0, 5); minimizeBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 55); minimizeBtn.BorderSizePixel = 0; minimizeBtn.Text = "-"; minimizeBtn.TextColor3 = Color3.new(1, 1, 1); minimizeBtn.Font = Enum.Font.GothamBold; minimizeBtn.TextSize = 18; minimizeBtn.ZIndex = 10
@@ -927,7 +917,6 @@ end)
 local sideBar = Instance.new("Frame", mainBody)
 sideBar.Size = UDim2.new(0, 80, 1, 0); sideBar.BackgroundColor3 = Color3.fromRGB(10, 10, 10); sideBar.BorderSizePixel = 0
 
--- TABS
 local autoFarmTabBtn = Instance.new("TextButton", sideBar)
 autoFarmTabBtn.Size = UDim2.new(1, 0, 0, 45); autoFarmTabBtn.Text = "autofarm"; autoFarmTabBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20); autoFarmTabBtn.TextColor3 = Color3.new(1, 1, 1); autoFarmTabBtn.Font = Enum.Font.GothamBold; autoFarmTabBtn.BorderSizePixel = 0; autoFarmTabBtn.TextSize = 12
 
@@ -940,7 +929,6 @@ visualTabBtn.Size = UDim2.new(1, 0, 0, 45); visualTabBtn.Position = UDim2.new(0,
 local explorerTabBtn = Instance.new("TextButton", sideBar)
 explorerTabBtn.Size = UDim2.new(1, 0, 0, 45); explorerTabBtn.Position = UDim2.new(0, 0, 0, 135); explorerTabBtn.Text = "explorer"; explorerTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0); explorerTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5); explorerTabBtn.Font = Enum.Font.GothamBold; explorerTabBtn.BorderSizePixel = 0; explorerTabBtn.TextSize = 12
 
--- FRAMES
 local autoFarmFrame = Instance.new("Frame", mainBody)
 autoFarmFrame.Size = UDim2.new(1, -100, 1, -20); autoFarmFrame.Position = UDim2.new(0, 90, 0, 10); autoFarmFrame.BackgroundTransparency = 1
 
@@ -953,11 +941,7 @@ visualFrame.Size = UDim2.new(1, -100, 1, -20); visualFrame.Position = UDim2.new(
 -- AUTO FARM TAB
 createStrictToggle(autoFarmFrame, "enable auto farm", UDim2.new(0,0,0,0), isAutoFarmEnabled, function(v) 
     isAutoFarmEnabled = v 
-    if v then
-        startAutoFarm()
-    else
-        stopAutoFarm()
-    end
+    if v then startAutoFarm() else stopAutoFarm() end
 end)
 
 createStrictToggle(autoFarmFrame, "boss detection", UDim2.new(0,0,0,35), isBossDetectionEnabled, function(v) isBossDetectionEnabled = v end)
@@ -975,15 +959,25 @@ end)
 createStrictSlider(autoFarmFrame, "safe underground depth", UDim2.new(0,0,0,195), 5, 30, safeUndergroundDepth, function(v) safeUndergroundDepth = v end)
 
 -- Combat Tab
-createStrictToggle(combatFrame, "camera lock", UDim2.new(0,0,0,0), isLockOnActive, function(v) isLockOnActive = v end)
+createStrictToggle(combatFrame, "camera lock (normal)", UDim2.new(0,0,0,0), isLockOnActive, function(v) 
+    isLockOnActive = v 
+    if v then isUndergroundCameraLock = false end
+end)
+
+createStrictToggle(combatFrame, "camera lock (underground)", UDim2.new(0,0,0,35), isUndergroundCameraLock, function(v) 
+    isUndergroundCameraLock = v 
+    if v then isLockOnActive = false end
+end)
+
 local bindBtn = Instance.new("TextButton", combatFrame)
-bindBtn.Size = UDim2.new(1, 0, 0, 30); bindBtn.Position = UDim2.new(0,0,0,35); bindBtn.BackgroundColor3 = Color3.fromRGB(20,20,20); bindBtn.Text = "keybind: " .. lockKey.Name:lower(); bindBtn.TextColor3 = Color3.new(1,1,1); bindBtn.Font = Enum.Font.Code; bindBtn.TextSize = 11; bindBtn.BorderSizePixel = 1; bindBtn.BorderColor3 = Color3.fromRGB(50,50,50)
+bindBtn.Size = UDim2.new(1, 0, 0, 30); bindBtn.Position = UDim2.new(0,0,0,70); bindBtn.BackgroundColor3 = Color3.fromRGB(20,20,20); bindBtn.Text = "keybind: " .. lockKey.Name:lower(); bindBtn.TextColor3 = Color3.new(1,1,1); bindBtn.Font = Enum.Font.Code; bindBtn.TextSize = 11; bindBtn.BorderSizePixel = 1; bindBtn.BorderColor3 = Color3.fromRGB(50,50,50)
 bindBtn.MouseButton1Click:Connect(function() isBinding = true; bindBtn.Text = "press any key..." end)
-createStrictSlider(combatFrame, "lock smoothness", UDim2.new(0,0,0,75), 0.05, 1, lockSmoothness, function(v) lockSmoothness = v end)
-createStrictSlider(combatFrame, "max lock distance", UDim2.new(0,0,0,130), 1, 500, maxLockDistance, function(v) maxLockDistance = v end)
-createStrictToggle(combatFrame, "auto shoot", UDim2.new(0,0,0,185), isAutoShootEnabled, function(v) isAutoShootEnabled = v end)
-createStrictSlider(combatFrame, "shoot speed", UDim2.new(0,0,0,220), 0.05, 0.5, shootSpeed, function(v) shootDelay = v end)
-createStrictSlider(combatFrame, "sticky target", UDim2.new(0,0,0,275), 0.5, 5, stickyTime, function(v) stickyTime = v end)
+
+createStrictSlider(combatFrame, "lock smoothness", UDim2.new(0,0,0,110), 0.05, 1, lockSmoothness, function(v) lockSmoothness = v end)
+createStrictSlider(combatFrame, "max lock distance", UDim2.new(0,0,0,165), 1, 500, maxLockDistance, function(v) maxLockDistance = v end)
+createStrictToggle(combatFrame, "auto shoot", UDim2.new(0,0,0,220), isAutoShootEnabled, function(v) isAutoShootEnabled = v end)
+createStrictSlider(combatFrame, "shoot speed", UDim2.new(0,0,0,255), 0.05, 0.5, shootSpeed, function(v) shootDelay = v end)
+createStrictSlider(combatFrame, "sticky target", UDim2.new(0,0,0,310), 0.5, 5, stickyTime, function(v) stickyTime = v end)
 
 -- Visual Tab
 createStrictToggle(visualFrame, "hitbox outline", UDim2.new(0,0,0,0), isShowHitboxEnabled, function(v) isShowHitboxEnabled = v end)
@@ -1031,7 +1025,7 @@ visualTabBtn.MouseButton1Click:Connect(function() switchTab("visual") end)
 explorerTabBtn.MouseButton1Click:Connect(function() createObjectExplorer() end)
 
 RunService.Heartbeat:Connect(function()
-    if isAutoShootEnabled and isLockOnActive and currentLockedTarget then
+    if isAutoShootEnabled and (isLockOnActive or isUndergroundCameraLock) and currentLockedTarget then
         performAutoShoot()
     end
 end)
@@ -1040,12 +1034,26 @@ local lastVisualUpdate = 0
 local visualUpdateRate = 0.2
 
 RunService.RenderStepped:Connect(function(dt)
-    if isLockOnActive then
+    -- CÂMERA LOCK COM MODO UNDERGROUND
+    if isLockOnActive or isUndergroundCameraLock then
         local target = getValidTarget()
         if target then
-            local targetPos = target.Position
-            local targetRotation = CFrame.lookAt(Camera.CFrame.Position, targetPos).Rotation
-            Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position) * targetRotation, 1 - lockSmoothness)
+            local char = player.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            
+            if isUndergroundCameraLock and root then
+                -- MODO UNDERGROUND: Mira de baixo para cima
+                local targetPos = target.Position
+                local undergroundPos = root.Position - Vector3.new(0, undergroundDepth, 0)
+                local lookDirection = (targetPos - undergroundPos).Unit
+                local targetRotation = CFrame.lookAt(Camera.CFrame.Position, Camera.CFrame.Position + lookDirection).Rotation
+                Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position) * targetRotation, 1 - lockSmoothness)
+            elseif isLockOnActive then
+                -- MODO NORMAL: Mira direta
+                local targetPos = target.Position
+                local targetRotation = CFrame.lookAt(Camera.CFrame.Position, targetPos).Rotation
+                Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position) * targetRotation, 1 - lockSmoothness)
+            end
         end
     end
     
@@ -1085,11 +1093,21 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         if input.KeyCode == Enum.KeyCode.Insert then 
             header.Visible = not header.Visible
         elseif input.KeyCode == lockKey then 
-            isLockOnActive = not isLockOnActive 
+            -- TOGGLE PARA QUALQUER MODO DE LOCK ATIVO
+            if isLockOnActive then
+                isLockOnActive = false
+            elseif isUndergroundCameraLock then
+                isUndergroundCameraLock = false
+            else
+                isLockOnActive = true
+            end
         end
     end
 end)
 
 print("[ZOMBIE RNG] Auto Farm System carregado!")
 print("[ZOMBIE RNG] Pressione INSERT para abrir/fechar o menu")
+print("[ZOMBIE RNG] Pressione T para pausar/retomar Camera Lock")
+print("[ZOMBIE RNG] NOVO: Camera Lock (Underground) - Atira de baixo para cima!")
+print("[ZOMBIE RNG] Auto-shoot só funciona quando o jogo está focado")
 print("[ZOMBIE RNG] Use a aba EXPLORER para descobrir nomes de objetos no jogo")
