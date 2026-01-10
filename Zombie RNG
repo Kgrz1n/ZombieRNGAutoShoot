@@ -1,3 +1,6 @@
+-- note: credit @deadshizik + Grz1n
+-- COMPLETE VERSION WITH TELEPORT SYSTEM
+
 local player = game.Players.LocalPlayer
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -25,9 +28,10 @@ local lastShakeTime = 0
 
 -- ==================== VARIÁVEIS ORIGINAIS ====================
 local isLockOnActive = false
-local isUndergroundCameraLock = false -- NOVO: câmera de baixo para cima
+local isUndergroundCameraLock = false
 local isShowHitboxEnabled = false
 local isAutoShootEnabled = false
+local isAutoShootPaused = false
 local isWallCheckEnabled = true
 local isLowGraphicsEnabled = false
 local isReduceMotionEnabled = false
@@ -54,22 +58,40 @@ local flyConnection
 local noclipConnection
 local autoFarmConnection
 
--- ==================== FUNÇÕES AUTO FARM ====================
+-- ==================== TELEPORT SYSTEM ====================
+local savedLocations = {
+    {name = "Slot 1", x = 0, y = 0, z = 0, saved = false},
+    {name = "Slot 2", x = 0, y = 0, z = 0, saved = false},
+    {name = "Slot 3", x = 0, y = 0, z = 0, saved = false},
+    {name = "Slot 4", x = 0, y = 0, z = 0, saved = false},
+    {name = "Slot 5", x = 0, y = 0, z = 0, saved = false}
+}
 
-local function detectScreenShake()
-    local currentPos = Camera.CFrame.Position
-    task.wait(0.1)
-    local newPos = Camera.CFrame.Position
-    local distance = (currentPos - newPos).Magnitude
-    
-    if distance > 0.5 and tick() - lastShakeTime > 5 then
-        lastShakeTime = tick()
-        print("[AUTO FARM] Boss detectado por tremida de tela!")
-        isBossRound = true
+local function teleportToCoords(x, y, z)
+    local char = player.Character
+    if not char then return false end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = CFrame.new(x, y, z)
+        print("[TELEPORT] Teleportado para:", math.floor(x), math.floor(y), math.floor(z))
         return true
     end
     return false
 end
+
+local function getCurrentPosition()
+    local char = player.Character
+    if char then
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if root then
+            local pos = root.Position
+            return math.floor(pos.X), math.floor(pos.Y), math.floor(pos.Z)
+        end
+    end
+    return 0, 0, 0
+end
+
+-- ==================== FUNÇÕES AUTO FARM ====================
 
 local function isBossZombie(zombie)
     if not zombie then return false end
@@ -305,7 +327,6 @@ local function createObjectExplorer()
         end
         
         yPos = 0
-        
         local foundObjects = {}
         
         for _, obj in pairs(workspace:GetDescendants()) do
@@ -341,7 +362,6 @@ local function createObjectExplorer()
         end
         
         scroll.CanvasSize = UDim2.new(0, 0, 0, yPos)
-        
         print("[EXPLORER] Encontrados " .. yPos/27 .. " objetos relevantes!")
     end)
 end
@@ -366,7 +386,6 @@ end
 local function toggleFly(enabled)
     local char = player.Character
     if not char then return end
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
     local rootPart = char:FindFirstChild("HumanoidRootPart")
     
     if enabled then
@@ -719,20 +738,6 @@ local function toggleLowGraphics(enabled)
     end
 end
 
-local function hasLineOfSight(fromPos, toPos)
-    if not isWallCheckEnabled then return true end
-    
-    local rayParams = RaycastParams.new()
-    rayParams.FilterDescendantsInstances = {player.Character, ZombiesFolder, ServerZombies}
-    rayParams.FilterType = Enum.RaycastFilterType.Blacklist
-    rayParams.IgnoreWater = true
-    
-    local direction = (toPos - fromPos)
-    local rayResult = workspace:Raycast(fromPos, direction, rayParams)
-    
-    return rayResult == nil
-end
-
 local function isZombieValid(zombieClient)
     if not zombieClient or not zombieClient.Parent or zombieClient.Parent ~= ZombiesFolder then return false end
     local hitbox = zombieClient:FindFirstChild(TARGET_PART_NAME)
@@ -815,28 +820,17 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local function performAutoShoot()
     if not isAutoShootEnabled then return end
+    if isAutoShootPaused then return end
     if not (isLockOnActive or isUndergroundCameraLock) then return end
     if not currentLockedTarget then return end
     
     local currentTime = tick()
     if currentTime - lastShootTime < shootDelay then return end
     
-    -- MÉTODO 1: Tenta mouse1click primeiro
-    local success1 = pcall(function()
+    pcall(function()
         mouse1click()
     end)
     
-    -- MÉTODO 2: Se não funcionar, tenta VirtualInputManager
-    if not success1 then
-        pcall(function()
-            local mouse = player:GetMouse()
-            VirtualInputManager:SendMouseButtonEvent(mouse.X, mouse.Y, 0, true, game, 0)
-            task.wait(0.05)
-            VirtualInputManager:SendMouseButtonEvent(mouse.X, mouse.Y, 0, false, game, 0)
-        end)
-    end
-    
-    -- MÉTODO 3: Fallback para mouse1press/release
     pcall(function()
         mouse1press()
         task.wait(0.05)
@@ -904,8 +898,6 @@ headerTxt.Size = UDim2.new(1, -70, 1, 0); headerTxt.Position = UDim2.new(0, 10, 
 local mainBody = Instance.new("Frame", header)
 mainBody.Size = UDim2.new(1, 0, 0, 470); mainBody.Position = UDim2.new(0, 0, 1, 1); mainBody.BackgroundColor3 = Color3.fromRGB(0, 0, 0); mainBody.BorderSizePixel = 0
 
--- BOTÃO X REMOVIDO PARA EVITAR FECHAR ACIDENTALMENTE
-
 local minimizeBtn = Instance.new("TextButton", header)
 minimizeBtn.Size = UDim2.new(0, 25, 0, 25); minimizeBtn.Position = UDim2.new(1, -30, 0, 5); minimizeBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 55); minimizeBtn.BorderSizePixel = 0; minimizeBtn.Text = "-"; minimizeBtn.TextColor3 = Color3.new(1, 1, 1); minimizeBtn.Font = Enum.Font.GothamBold; minimizeBtn.TextSize = 18; minimizeBtn.ZIndex = 10
 minimizeBtn.MouseButton1Click:Connect(function()
@@ -929,6 +921,9 @@ visualTabBtn.Size = UDim2.new(1, 0, 0, 45); visualTabBtn.Position = UDim2.new(0,
 local explorerTabBtn = Instance.new("TextButton", sideBar)
 explorerTabBtn.Size = UDim2.new(1, 0, 0, 45); explorerTabBtn.Position = UDim2.new(0, 0, 0, 135); explorerTabBtn.Text = "explorer"; explorerTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0); explorerTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5); explorerTabBtn.Font = Enum.Font.GothamBold; explorerTabBtn.BorderSizePixel = 0; explorerTabBtn.TextSize = 12
 
+local teleportTabBtn = Instance.new("TextButton", sideBar)
+teleportTabBtn.Size = UDim2.new(1, 0, 0, 45); teleportTabBtn.Position = UDim2.new(0, 0, 0, 180); teleportTabBtn.Text = "teleport"; teleportTabBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0); teleportTabBtn.TextColor3 = Color3.new(0.5, 0.5, 0.5); teleportTabBtn.Font = Enum.Font.GothamBold; teleportTabBtn.BorderSizePixel = 0; teleportTabBtn.TextSize = 12
+
 local autoFarmFrame = Instance.new("Frame", mainBody)
 autoFarmFrame.Size = UDim2.new(1, -100, 1, -20); autoFarmFrame.Position = UDim2.new(0, 90, 0, 10); autoFarmFrame.BackgroundTransparency = 1
 
@@ -937,6 +932,9 @@ combatFrame.Size = UDim2.new(1, -100, 1, -20); combatFrame.Position = UDim2.new(
 
 local visualFrame = Instance.new("Frame", mainBody)
 visualFrame.Size = UDim2.new(1, -100, 1, -20); visualFrame.Position = UDim2.new(0, 90, 0, 10); visualFrame.BackgroundTransparency = 1; visualFrame.Visible = false
+
+local teleportFrame = Instance.new("Frame", mainBody)
+teleportFrame.Size = UDim2.new(1, -100, 1, -20); teleportFrame.Position = UDim2.new(0, 90, 0, 10); teleportFrame.BackgroundTransparency = 1; teleportFrame.Visible = false
 
 -- AUTO FARM TAB
 createStrictToggle(autoFarmFrame, "enable auto farm", UDim2.new(0,0,0,0), isAutoFarmEnabled, function(v) 
@@ -976,8 +974,27 @@ bindBtn.MouseButton1Click:Connect(function() isBinding = true; bindBtn.Text = "p
 createStrictSlider(combatFrame, "lock smoothness", UDim2.new(0,0,0,110), 0.05, 1, lockSmoothness, function(v) lockSmoothness = v end)
 createStrictSlider(combatFrame, "max lock distance", UDim2.new(0,0,0,165), 1, 500, maxLockDistance, function(v) maxLockDistance = v end)
 createStrictToggle(combatFrame, "auto shoot", UDim2.new(0,0,0,220), isAutoShootEnabled, function(v) isAutoShootEnabled = v end)
-createStrictSlider(combatFrame, "shoot speed", UDim2.new(0,0,0,255), 0.05, 0.5, shootSpeed, function(v) shootDelay = v end)
-createStrictSlider(combatFrame, "sticky target", UDim2.new(0,0,0,310), 0.5, 5, stickyTime, function(v) stickyTime = v end)
+
+-- BOTÃO DE PAUSE AUTO-SHOOT
+local pauseShootBtn = Instance.new("TextButton", combatFrame)
+pauseShootBtn.Size = UDim2.new(1, 0, 0, 30)
+pauseShootBtn.Position = UDim2.new(0, 0, 0, 255)
+pauseShootBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+pauseShootBtn.BorderSizePixel = 1
+pauseShootBtn.BorderColor3 = Color3.fromRGB(60, 60, 60)
+pauseShootBtn.Text = "⏸ PAUSE AUTO-SHOOT (P)"
+pauseShootBtn.TextColor3 = Color3.new(1, 1, 1)
+pauseShootBtn.Font = Enum.Font.GothamBold
+pauseShootBtn.TextSize = 11
+pauseShootBtn.MouseButton1Click:Connect(function()
+    isAutoShootPaused = not isAutoShootPaused
+    pauseShootBtn.Text = isAutoShootPaused and "▶ RESUME AUTO-SHOOT (P)" or "⏸ PAUSE AUTO-SHOOT (P)"
+    pauseShootBtn.BackgroundColor3 = isAutoShootPaused and Color3.fromRGB(200, 50, 50) or Color3.fromRGB(40, 40, 40)
+    print("[AUTO-SHOOT]", isAutoShootPaused and "PAUSADO" or "ATIVO")
+end)
+
+createStrictSlider(combatFrame, "shoot speed", UDim2.new(0,0,0,295), 0.05, 0.5, shootSpeed, function(v) shootDelay = v end)
+createStrictSlider(combatFrame, "sticky target", UDim2.new(0,0,0,350), 0.5, 5, stickyTime, function(v) stickyTime = v end)
 
 -- Visual Tab
 createStrictToggle(visualFrame, "hitbox outline", UDim2.new(0,0,0,0), isShowHitboxEnabled, function(v) isShowHitboxEnabled = v end)
@@ -1004,28 +1021,178 @@ createStrictToggle(visualFrame, "underground", UDim2.new(0,0,0,230), isUndergrou
 end)
 createStrictSlider(visualFrame, "underground depth", UDim2.new(0,0,0,265), 5, 50, undergroundDepth, function(v) undergroundDepth = v end)
 
+-- ==================== TELEPORT TAB ====================
+local tpTitle = Instance.new("TextLabel", teleportFrame)
+tpTitle.Size = UDim2.new(1, 0, 0, 25)
+tpTitle.Position = UDim2.new(0, 0, 0, 0)
+tpTitle.Text = "MANUAL TELEPORT"
+tpTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+tpTitle.Font = Enum.Font.GothamBold
+tpTitle.TextSize = 13
+tpTitle.BackgroundTransparency = 1
+tpTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local xInput = Instance.new("TextBox", teleportFrame)
+xInput.Size = UDim2.new(0.3, -5, 0, 30)
+xInput.Position = UDim2.new(0, 0, 0, 30)
+xInput.PlaceholderText = "X"
+xInput.Text = "0"
+xInput.TextColor3 = Color3.new(1, 1, 1)
+xInput.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+xInput.BorderColor3 = Color3.fromRGB(60, 60, 60)
+xInput.Font = Enum.Font.Code
+xInput.TextSize = 12
+
+local yInput = Instance.new("TextBox", teleportFrame)
+yInput.Size = UDim2.new(0.3, -5, 0, 30)
+yInput.Position = UDim2.new(0.35, 0, 0, 30)
+yInput.PlaceholderText = "Y"
+yInput.Text = "0"
+yInput.TextColor3 = Color3.new(1, 1, 1)
+yInput.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+yInput.BorderColor3 = Color3.fromRGB(60, 60, 60)
+yInput.Font = Enum.Font.Code
+yInput.TextSize = 12
+
+local zInput = Instance.new("TextBox", teleportFrame)
+zInput.Size = UDim2.new(0.3, -5, 0, 30)
+zInput.Position = UDim2.new(0.7, 0, 0, 30)
+zInput.PlaceholderText = "Z"
+zInput.Text = "0"
+zInput.TextColor3 = Color3.new(1, 1, 1)
+zInput.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+zInput.BorderColor3 = Color3.fromRGB(60, 60, 60)
+zInput.Font = Enum.Font.Code
+zInput.TextSize = 12
+
+local getCurrentPosBtn = Instance.new("TextButton", teleportFrame)
+getCurrentPosBtn.Size = UDim2.new(0.48, 0, 0, 30)
+getCurrentPosBtn.Position = UDim2.new(0, 0, 0, 65)
+getCurrentPosBtn.Text = "GET CURRENT POS"
+getCurrentPosBtn.TextColor3 = Color3.new(1, 1, 1)
+getCurrentPosBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 150)
+getCurrentPosBtn.BorderSizePixel = 0
+getCurrentPosBtn.Font = Enum.Font.GothamBold
+getCurrentPosBtn.TextSize = 11
+getCurrentPosBtn.MouseButton1Click:Connect(function()
+    local x, y, z = getCurrentPosition()
+    xInput.Text = tostring(x)
+    yInput.Text = tostring(y)
+    zInput.Text = tostring(z)
+    print("[TELEPORT] Posição atual:", x, y, z)
+end)
+
+local teleportBtn = Instance.new("TextButton", teleportFrame)
+teleportBtn.Size = UDim2.new(0.48, 0, 0, 30)
+teleportBtn.Position = UDim2.new(0.52, 0, 0, 65)
+teleportBtn.Text = "TELEPORT"
+teleportBtn.TextColor3 = Color3.new(1, 1, 1)
+teleportBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+teleportBtn.BorderSizePixel = 0
+teleportBtn.Font = Enum.Font.GothamBold
+teleportBtn.TextSize = 11
+teleportBtn.MouseButton1Click:Connect(function()
+    local x = tonumber(xInput.Text) or 0
+    local y = tonumber(yInput.Text) or 0
+    local z = tonumber(zInput.Text) or 0
+    teleportToCoords(x, y, z)
+end)
+
+local savedTitle = Instance.new("TextLabel", teleportFrame)
+savedTitle.Size = UDim2.new(1, 0, 0, 25)
+savedTitle.Position = UDim2.new(0, 0, 0, 105)
+savedTitle.Text = "SAVED LOCATIONS"
+savedTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+savedTitle.Font = Enum.Font.GothamBold
+savedTitle.TextSize = 13
+savedTitle.BackgroundTransparency = 1
+savedTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local slotYPos = 135
+for i, loc in ipairs(savedLocations) do
+    local slotFrame = Instance.new("Frame", teleportFrame)
+    slotFrame.Size = UDim2.new(1, 0, 0, 35)
+    slotFrame.Position = UDim2.new(0, 0, 0, slotYPos)
+    slotFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    slotFrame.BorderColor3 = Color3.fromRGB(50, 50, 50)
+    slotFrame.BorderSizePixel = 1
+    
+    local slotLabel = Instance.new("TextLabel", slotFrame)
+    slotLabel.Size = UDim2.new(0.4, 0, 1, 0)
+    slotLabel.Position = UDim2.new(0, 5, 0, 0)
+    slotLabel.Text = loc.name
+    slotLabel.TextColor3 = loc.saved and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(150, 150, 150)
+    slotLabel.Font = Enum.Font.Code
+    slotLabel.TextSize = 10
+    slotLabel.BackgroundTransparency = 1
+    slotLabel.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local saveBtn = Instance.new("TextButton", slotFrame)
+    saveBtn.Size = UDim2.new(0.28, -2, 0, 25)
+    saveBtn.Position = UDim2.new(0.42, 0, 0, 5)
+    saveBtn.Text = "SAVE"
+    saveBtn.TextColor3 = Color3.new(1, 1, 1)
+    saveBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 50)
+    saveBtn.BorderSizePixel = 0
+    saveBtn.Font = Enum.Font.GothamBold
+    saveBtn.TextSize = 9
+    saveBtn.MouseButton1Click:Connect(function()
+        local x, y, z = getCurrentPosition()
+        savedLocations[i].x = x
+        savedLocations[i].y = y
+        savedLocations[i].z = z
+        savedLocations[i].saved = true
+        slotLabel.Text = string.format("%s (%d, %d, %d)", loc.name, x, y, z)
+        slotLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        print("[TELEPORT] Salvo em " .. loc.name .. ":", x, y, z)
+    end)
+    
+    local tpBtn = Instance.new("TextButton", slotFrame)
+    tpBtn.Size = UDim2.new(0.28, -2, 0, 25)
+    tpBtn.Position = UDim2.new(0.71, 0, 0, 5)
+    tpBtn.Text = "GO"
+    tpBtn.TextColor3 = Color3.new(1, 1, 1)
+    tpBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+    tpBtn.BorderSizePixel = 0
+    tpBtn.Font = Enum.Font.GothamBold
+    tpBtn.TextSize = 9
+    tpBtn.MouseButton1Click:Connect(function()
+        if savedLocations[i].saved then
+            teleportToCoords(savedLocations[i].x, savedLocations[i].y, savedLocations[i].z)
+        else
+            print("[TELEPORT] Slot vazio! Salve uma posição primeiro.")
+        end
+    end)
+    
+    slotYPos = slotYPos + 40
+end
+
 -- TAB SWITCHING
 local function switchTab(target)
     autoFarmFrame.Visible = (target == "autofarm")
     combatFrame.Visible = (target == "combat")
     visualFrame.Visible = (target == "visual")
+    teleportFrame.Visible = (target == "teleport")
     
     autoFarmTabBtn.BackgroundColor3 = (target == "autofarm") and Color3.fromRGB(20, 20, 20) or Color3.fromRGB(0, 0, 0)
     combatTabBtn.BackgroundColor3 = (target == "combat") and Color3.fromRGB(20, 20, 20) or Color3.fromRGB(0, 0, 0)
     visualTabBtn.BackgroundColor3 = (target == "visual") and Color3.fromRGB(20, 20, 20) or Color3.fromRGB(0, 0, 0)
+    teleportTabBtn.BackgroundColor3 = (target == "teleport") and Color3.fromRGB(20, 20, 20) or Color3.fromRGB(0, 0, 0)
     
     autoFarmTabBtn.TextColor3 = (target == "autofarm") and Color3.new(1, 1, 1) or Color3.new(0.5, 0.5, 0.5)
     combatTabBtn.TextColor3 = (target == "combat") and Color3.new(1, 1, 1) or Color3.new(0.5, 0.5, 0.5)
     visualTabBtn.TextColor3 = (target == "visual") and Color3.new(1, 1, 1) or Color3.new(0.5, 0.5, 0.5)
+    teleportTabBtn.TextColor3 = (target == "teleport") and Color3.new(1, 1, 1) or Color3.new(0.5, 0.5, 0.5)
 end
 
 autoFarmTabBtn.MouseButton1Click:Connect(function() switchTab("autofarm") end)
 combatTabBtn.MouseButton1Click:Connect(function() switchTab("combat") end)
 visualTabBtn.MouseButton1Click:Connect(function() switchTab("visual") end)
+teleportTabBtn.MouseButton1Click:Connect(function() switchTab("teleport") end)
 explorerTabBtn.MouseButton1Click:Connect(function() createObjectExplorer() end)
 
 RunService.Heartbeat:Connect(function()
-    if isAutoShootEnabled and (isLockOnActive or isUndergroundCameraLock) and currentLockedTarget then
+    if isAutoShootEnabled and not isAutoShootPaused and (isLockOnActive or isUndergroundCameraLock) and currentLockedTarget then
         performAutoShoot()
     end
 end)
@@ -1034,7 +1201,6 @@ local lastVisualUpdate = 0
 local visualUpdateRate = 0.2
 
 RunService.RenderStepped:Connect(function(dt)
-    -- CÂMERA LOCK COM MODO UNDERGROUND
     if isLockOnActive or isUndergroundCameraLock then
         local target = getValidTarget()
         if target then
@@ -1042,14 +1208,12 @@ RunService.RenderStepped:Connect(function(dt)
             local root = char and char:FindFirstChild("HumanoidRootPart")
             
             if isUndergroundCameraLock and root then
-                -- MODO UNDERGROUND: Mira de baixo para cima
                 local targetPos = target.Position
                 local undergroundPos = root.Position - Vector3.new(0, undergroundDepth, 0)
                 local lookDirection = (targetPos - undergroundPos).Unit
                 local targetRotation = CFrame.lookAt(Camera.CFrame.Position, Camera.CFrame.Position + lookDirection).Rotation
                 Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position) * targetRotation, 1 - lockSmoothness)
             elseif isLockOnActive then
-                -- MODO NORMAL: Mira direta
                 local targetPos = target.Position
                 local targetRotation = CFrame.lookAt(Camera.CFrame.Position, targetPos).Rotation
                 Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position) * targetRotation, 1 - lockSmoothness)
@@ -1093,7 +1257,6 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         if input.KeyCode == Enum.KeyCode.Insert then 
             header.Visible = not header.Visible
         elseif input.KeyCode == lockKey then 
-            -- TOGGLE PARA QUALQUER MODO DE LOCK ATIVO
             if isLockOnActive then
                 isLockOnActive = false
             elseif isUndergroundCameraLock then
@@ -1101,6 +1264,9 @@ UserInputService.InputBegan:Connect(function(input, gpe)
             else
                 isLockOnActive = true
             end
+        elseif input.KeyCode == Enum.KeyCode.P then
+            isAutoShootPaused = not isAutoShootPaused
+            print("[AUTO-SHOOT]", isAutoShootPaused and "PAUSADO - Pode usar o PC" or "ATIVO")
         end
     end
 end)
@@ -1108,6 +1274,7 @@ end)
 print("[ZOMBIE RNG] Auto Farm System carregado!")
 print("[ZOMBIE RNG] Pressione INSERT para abrir/fechar o menu")
 print("[ZOMBIE RNG] Pressione T para pausar/retomar Camera Lock")
-print("[ZOMBIE RNG] NOVO: Camera Lock (Underground) - Atira de baixo para cima!")
-print("[ZOMBIE RNG] Auto-shoot só funciona quando o jogo está focado")
-print("[ZOMBIE RNG] Use a aba EXPLORER para descobrir nomes de objetos no jogo")
+print("[ZOMBIE RNG] Pressione P para PAUSAR AUTO-SHOOT (usar PC)")
+print("[ZOMBIE RNG] NOVO: Aba TELEPORT com sistema de coordenadas!")
+print("[ZOMBIE RNG] Camera Lock (Underground) - Atira de baixo para cima!")
+print("[ZOMBIE RNG] Use a aba EXPLORER para descobrir nomes de objetos")
